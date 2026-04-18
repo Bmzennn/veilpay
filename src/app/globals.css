@@ -1,26 +1,72 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --primary: #00b3ff;
+    --primary-glow: rgba(0, 179, 255, 0.35);
+    --primary-dim: rgba(0, 179, 255, 0.1);
+    --primary-surface: rgba(0, 179, 255, 0.05);
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background-color: #f0f4f8;
+    color: #0a0a0a;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  * {
+    box-sizing: border-box;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  .glass {
+    background: rgba(255, 255, 255, 0.62);
+    backdrop-filter: blur(36px) saturate(180%);
+    -webkit-backdrop-filter: blur(36px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    box-shadow:
+      0 8px 40px rgba(0, 0, 0, 0.10),
+      0 1px 2px rgba(0, 0, 0, 0.05),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+
+  .glass-hover:hover {
+    background: rgba(255, 255, 255, 0.75);
+    border-color: rgba(0, 179, 255, 0.25);
+    transition: all 0.3s ease;
+  }
+
+  .glow-cyan {
+    box-shadow: 0 0.7px 30px rgba(0, 179, 255, 0.3),
+      0 0 0 1px rgba(0, 179, 255, 0.15);
+  }
+
+  .glow-violet {
+    box-shadow: 0 5px 22px rgba(0, 179, 255, 0.15);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, #00b3ff 0%, #0088cc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
 }
