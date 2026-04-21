@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useWalletContext } from "@/components/WalletContext";
 import { WalletButton } from "@/components/WalletButton";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -9,7 +9,7 @@ import {
   getUmbraClient, 
   getPublicBalanceToReceiverClaimableUtxoCreatorFunction 
 } from "@umbra-privacy/sdk";
-import { createBrowserSigner, makeZkProverDeps } from "@/lib/umbra";
+import { createBrowserSigner, makeZkProverDeps, preloadCreateAssets } from "@/lib/umbra";
 import { getCreateReceiverClaimableUtxoFromPublicBalanceProver } from "@umbra-privacy/web-zk-prover";
 import { RPC_URL, RPC_WS_URL, UMBRA_INDEXER_URL, NETWORK, TOKEN_CONFIG } from "@/lib/constants";
 import type { Token } from "@/types";
@@ -21,6 +21,12 @@ const INVOICE_AMOUNT_USDC = 0.5;
 
 export default function TestX402Page() {
   const { wallet, account, connected } = useWalletContext();
+
+  // Background pre-load for ZK files
+  useEffect(() => {
+    preloadCreateAssets();
+  }, []);
+
   const [status, setStatus] = useState<string>("");
   const [premiumData, setPremiumData] = useState<any>(null);
   const [loading, setLoading] = useState(false);

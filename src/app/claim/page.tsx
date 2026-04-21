@@ -16,7 +16,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { LiquidButton } from "@/components/ui/LiquidButton";
 import { WalletButton } from "@/components/WalletButton";
 import { useWalletContext } from "@/components/WalletContext";
-import { scanForUtxo, claimPaymentLink, parseClaimHash } from "@/lib/umbra";
+import { scanForUtxo, claimPaymentLink, parseClaimHash, preloadClaimAssets } from "@/lib/umbra";
 import { NETWORK } from "@/lib/constants";
 import type { Wallet, WalletAccount } from "@wallet-standard/core";
 import type { ClaimStep, Token } from "@/types";
@@ -52,6 +52,9 @@ export default function ClaimPage() {
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
+
+    // Start background ZK pre-load immediately
+    preloadClaimAssets();
 
     // Use a small timeout to allow initial render to complete
     // and avoid synchronous setState warnings in strict mode

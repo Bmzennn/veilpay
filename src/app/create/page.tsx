@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Shield, Lock, Globe, UserCheck } from "lucide-react";
 import { PublicKey } from "@solana/web3.js";
@@ -11,7 +11,7 @@ import { TokenSelector } from "@/components/ui/TokenSelector";
 import { LinkDisplay } from "@/components/ui/LinkDisplay";
 import { WalletButton } from "@/components/WalletButton";
 import { useWalletContext } from "@/components/WalletContext";
-import { createPaymentLink, validateAmount } from "@/lib/umbra";
+import { createPaymentLink, validateAmount, preloadCreateAssets } from "@/lib/umbra";
 import type { Token, LinkStep, PaymentLinkMeta, PaymentMode } from "@/types";
 import { LINK_EXPIRY_DAYS } from "@/lib/constants";
 
@@ -26,6 +26,11 @@ function isValidSolanaAddress(addr: string): boolean {
 
 export default function CreatePage() {
   const { connected, wallet, account } = useWalletContext();
+
+  // Pre-load ZK circuits in the background
+  useEffect(() => {
+    preloadCreateAssets();
+  }, []);
 
   const [amount, setAmount] = useState("");
   const [token, setToken] = useState<Token>("USDC");

@@ -164,6 +164,42 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
   };
 }
 
+/**
+ * Proactively pre-downloads and caches the massive ZK circuits needed for sending.
+ */
+export async function preloadCreateAssets() {
+  if (typeof window === "undefined") return;
+  console.log("[zkCache] Proactive pre-load started for 'send' circuits...");
+  try {
+    const provider = getPersistentZkAssetProvider();
+    await Promise.all([
+      provider.getAssetUrls("userregistration" as any),
+      provider.getAssetUrls("receiverclaimableutxofrompublicbalance" as any)
+    ]);
+    console.log("[zkCache] Proactive pre-load complete.");
+  } catch (e) {
+    console.warn("[zkCache] Proactive pre-load failed:", e);
+  }
+}
+
+/**
+ * Proactively pre-downloads and caches the massive ZK circuits needed for claiming.
+ * Call this when the user opens the /claim page to eliminate the download wait time
+ * when they actually click the "Claim" button.
+ */
+export async function preloadClaimAssets() {
+  if (typeof window === "undefined") return;
+  console.log("[zkCache] Proactive pre-load started for 'claim' circuits...");
+  try {
+    const provider = getPersistentZkAssetProvider();
+    // This triggers the fetch-and-cache logic inside the provider
+    await provider.getAssetUrls("claimreceiverclaimableutxointoencryptedbalance" as any);
+    console.log("[zkCache] Proactive pre-load complete.");
+  } catch (e) {
+    console.warn("[zkCache] Proactive pre-load failed (will retry on-demand):", e);
+  }
+}
+
 export function makeZkProverDeps() {
   return {
     assetProvider: getPersistentZkAssetProvider(),
@@ -771,15 +807,15 @@ export async function createEphemeralSigner(privateKeyBytes: Uint8Array) {
  * @param skipPreflight  When true, uses the skip-preflight forwarder instead of
  *   the SDK's polling forwarder.  Required for the sender client (step 4) because
  *   the SDK's getPollingTransactionForwarder uses @solana/kit's
- *   getBase64EncodedWireTransaction, which re-encodes the transaction from structured
- *   fields rather than using messageBytes verbatim.  Our custom signer builds wire
- *   bytes manually (to inject CU price and avoid Phantom's injection), so the two
- *   encoding paths diverge — preflight simulation sees different bytes than what
- *   Phantom signed and fails.  Our skip-preflight forwarder calls
+ *   getBase64EncodedWireTransaction which re-encodes the transaction from
+ *   structured fields rather than using messageBytes verbatim.  Our custom signer
+ *   builds wire bytes manually (to inject CU price and avoid Phantom's injection),
+ *   so the two encoding paths diverge — preflight simulation sees different bytes
+ *   than what Phantom signed and fails.  Our skip-preflight forwarder calls
  *   encodeTransactionToWire(messageBytes, signatures) directly, keeping the exact
  *   bytes stable from Phantom's signing all the way to the validator.
  */
-async function makeClient(
+export async function makeClient(
   signer: Awaited<ReturnType<typeof createSignerFromPrivateKeyBytes>>,
   opts?: { skipPreflight?: boolean }
 ) {
