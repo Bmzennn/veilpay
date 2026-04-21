@@ -84,6 +84,10 @@ type U64 = { readonly [SubBrandSymbol]: "U64" }; declare const SubBrandSymbol: u
 const CDN_BASE = "https://d3j9fjdkre529f.cloudfront.net";
 const ZK_CACHE_NAME = "veilpay-zk-v2";
 
+type ManifestEntry = { url: string };
+type ManifestAsset = ManifestEntry | Record<string, ManifestEntry>;
+type Manifest = { assets: Record<string, ManifestAsset> };
+
 /**
  * Enhanced ZK asset provider with persistent browser caching.
  * Uses the Cache Storage API to store massive .zkey files (>50MB) 
