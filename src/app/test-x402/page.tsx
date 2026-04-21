@@ -74,8 +74,8 @@ export default function TestX402Page() {
         { zkProver: utxoProver }
       );
 
-      // result is TransactionSignature[]
-      const sigs = await createUtxo({
+      // createUtxo returns an object { createUtxoSignature, createProofAccountSignature, ... }
+      const result = await createUtxo({
         destinationAddress: invoice.destination as Address,
         mint: tokenCfg.mint as Address,
         amount: amountRaw as any,
@@ -83,11 +83,10 @@ export default function TestX402Page() {
         optionalData: invoiceIdBytes as any
       });
 
-      console.log("[testPayment] Signatures:", sigs);
+      console.log("[testPayment] Deposit Result:", result);
       
-      // If 2 sigs, [0] is proof, [1] is deposit.
-      const depositTxSig = sigs[sigs.length - 1];
-      const proofTxSig = sigs.length > 1 ? sigs[0] : sigs[0];
+      const depositTxSig = result.createUtxoSignature;
+      const proofTxSig = result.createProofAccountSignature;
 
       setStatus("Deposit confirmed! Verifying with server...");
 
@@ -214,8 +213,8 @@ export default function TestX402Page() {
                 </h3>
               </div>
               <div className="space-y-2 text-green-700">
-                <p className="text-sm font-medium leading-tight">{premiumData.message}</p>
-                <p className="text-xs italic opacity-80">"{premiumData.secretData}"</p>
+                <p className="font-medium">{premiumData.message}</p>
+                <p className="text-sm italic">"{premiumData.secretData}"</p>
               </div>
               <div className="pt-2 border-t border-green-100/50">
                 <p className="text-[9px] text-green-600/60 font-mono break-all uppercase tracking-tighter">

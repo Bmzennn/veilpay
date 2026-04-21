@@ -76,7 +76,7 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
     { zkProver: utxoProver }
   );
 
-  const sigs = await createUtxo({
+  const result = await createUtxo({
     destinationAddress: invoice.destination as Address,
     mint: tokenCfg.mint as Address,
     amount: amountRaw as any,
@@ -84,8 +84,8 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
     optionalData: invoiceIdBytes as any
   });
 
-  const depositTxSig = sigs[sigs.length - 1];
-  const proofTxSig = sigs.length > 1 ? sigs[0] : sigs[0];
+  const depositTxSig = result.createUtxoSignature;
+  const proofTxSig = result.createProofAccountSignature;
 
   console.log(`[x402Client] Deposit successful!`);
   console.log(`  Proof TX: ${proofTxSig}`);
