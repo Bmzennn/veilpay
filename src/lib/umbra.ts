@@ -183,8 +183,6 @@ export function makeZkProverDeps() {
     },
   };
 }
-  };
-}
 
 // ─── Error normalization ──────────────────────────────────────────────────────
 
