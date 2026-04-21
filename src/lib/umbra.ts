@@ -73,6 +73,7 @@ import type { Token, PaymentLinkMeta } from "@/types";
 
 // Derive U32 from the scanner function's parameter type (it is a branded bigint)
 type U32 = Parameters<ClaimableUtxoScannerFunction>[0];
+type U64 = { readonly [SubBrandSymbol]: "U64" }; declare const SubBrandSymbol: unique symbol;
 
 // ─── ZK asset provider ───────────────────────────────────────────────────────
 // The Umbra CDN omits CORS headers, so browser fetches are blocked.
@@ -82,7 +83,7 @@ type U32 = Parameters<ClaimableUtxoScannerFunction>[0];
 
 const CDN_BASE = "https://d3j9fjdkre529f.cloudfront.net";
 
-function makeZkProverDeps() {
+export function makeZkProverDeps() {
   return {
     assetProvider: getProxiedZkAssetProvider(),
     callbacks: {
@@ -162,7 +163,7 @@ function normalizeError(err: unknown): string {
       return "Insufficient SOL balance to cover transaction fees.";
     }
     if (msg.includes("not found") || msg.includes("account does not exist")) {
-      return "Account not found — please ensure your wallet is funded on devnet.";
+      return "Account not found — please ensure your wallet is funded.";
     }
     if (msg.includes("user rejected") || msg.includes("rejected")) {
       return "Transaction rejected in wallet.";
@@ -224,6 +225,8 @@ function makeSkipPreflightForwarder() {
 
   type SdkSignedTx = { messageBytes: Uint8Array; signatures: Record<string, Uint8Array | null> };
 
+  const clusterQuery = NETWORK === "mainnet" ? "" : `?cluster=${NETWORK}`;
+
   async function sendAndConfirm(tx: SdkSignedTx): Promise<string> {
     const wire = encodeTransactionToWire(tx.messageBytes, tx.signatures);
 
@@ -254,11 +257,10 @@ function makeSkipPreflightForwarder() {
     const sig = await trySend();
     if (!sig) throw new Error("Transaction send failed: no signature returned");
 
-    // Log immediately — copy this signature to check the explorer
     console.log(
       "[sendAndConfirm] ✅ submitted sig:", sig,
-      "\n  Solscan:  https://solscan.io/tx/" + sig + "?cluster=devnet",
-      "\n  Explorer: https://explorer.solana.com/tx/" + sig + "?cluster=devnet"
+      `\n  Solscan:  https://solscan.io/tx/${sig}${clusterQuery}`,
+      `\n  Explorer: https://explorer.solana.com/tx/${sig}${clusterQuery}`
     );
 
     const MAX_WAIT_MS = 90_000;
@@ -315,7 +317,7 @@ function makeSkipPreflightForwarder() {
 
     throw new Error(
       `Transaction timed out after ${MAX_WAIT_MS / 1000}s — sig: ${sig} — ` +
-      `check https://solscan.io/tx/${sig}?cluster=devnet`
+      `check https://solscan.io/tx/${sig}${clusterQuery}`
     );
   }
 
@@ -1034,20 +1036,44 @@ export async function createPaymentLink({
     };
 
     // 6. Persist non-sensitive metadata (fire-and-forget, Supabase optional)
-    fetch("/api/links", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: meta.id,
-        amount: meta.amount,
-        token: meta.token,
-        amount_raw: meta.amountRaw,
-        decimals: meta.decimals,
-        created_at: meta.createdAt,
-        expires_at: meta.expiresAt,
-        ...(meta.lockedTo ? { locked_to: meta.lockedTo } : {}),
-      }),
-    }).catch(() => {});
+    const timestamp = Math.floor(Date.now() / 1000);
+    const authMessage = `Authorize VeilPay Link: ${linkId} by ${senderAccount.address} at ${timestamp}`;
+    
+    let signature = "";
+    try {
+      const signFeature = senderWallet.features["solana:signMessage"] as {
+        signMessage: (
+          ...inputs: readonly { account: WalletAccount; message: Uint8Array }[]
+        ) => Promise<readonly { signature: Uint8Array }[]>;
+      };
+      const results = await signFeature.signMessage({
+        account: senderAccount,
+        message: new TextEncoder().encode(authMessage),
+      });
+      signature = Buffer.from(results[0].signature).toString("base64");
+    } catch (e) {
+      console.warn("Failed to sign metadata authorization message", e);
+    }
+
+    if (signature) {
+      fetch("/api/links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: meta.id,
+          amount: meta.amount,
+          token: meta.token,
+          amount_raw: meta.amountRaw,
+          decimals: meta.decimals,
+          created_at: meta.createdAt,
+          expires_at: meta.expiresAt,
+          sender_address: senderAccount.address,
+          signature,
+          timestamp,
+          ...(meta.lockedTo ? { locked_to: meta.lockedTo } : {}),
+        }),
+      }).catch(() => {});
+    }
 
     return { url, meta };
   } catch (err) {
@@ -1151,7 +1177,7 @@ export async function scanForUtxo(
     await debugLogRecentUtxos(ephemeralSigner.address.toString());
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      let totals = { pubRec: 0, selfBurn: 0, recv: 0, pubSelfBurn: 0 };
+      const totals = { pubRec: 0, selfBurn: 0, recv: 0, pubSelfBurn: 0 };
       let foundUtxo: Awaited<ReturnType<typeof scanner>>["publicReceived"][number] | null = null;
 
       try {
@@ -1238,7 +1264,17 @@ export async function claimPaymentLink({
     onStatusChange("Reconstructing claim key…");
     const ephemeralPrivateKey = bs58.decode(claimSecret);
     const ephemeralSigner = await createEphemeralSigner(ephemeralPrivateKey);
-    const client = await makeClient(ephemeralSigner);
+    
+    // Fast-Path Claimed Check: The Ephemeral Wallet is funded with ~0.018 SOL at creation.
+    // When a claim completes, we sweep 100% of the remaining SOL out of this wallet.
+    // If the balance is nearly zero (< 0.005 SOL), it is absolute on-chain proof the link was swept!
+    const connection = new Connection(RPC_URL, "confirmed");
+    const solBalance = await connection.getBalance(new PublicKey(ephemeralSigner.address.toString()), "confirmed");
+    if (solBalance < 5000000) { // 0.005 SOL
+      throw new Error("This payment link has already been claimed.");
+    }
+
+    const client = await makeClient(ephemeralSigner, { skipPreflight: false });
 
     // Re-scan to get the UTXO
     onStatusChange("Scanning shielded pool…");
@@ -1252,56 +1288,121 @@ export async function claimPaymentLink({
         break;
       }
     }
-    if (!utxo) {
-      throw new Error("No claimable UTXO found — this link may have already been claimed.");
+
+    const tokenCfg = TOKEN_CONFIG[token];
+    const mintAddress = tokenCfg.mint as Address;
+    
+    // Fast-path recovery check: Did the user already complete the ZK proof step?
+    const querier = getEncryptedBalanceQuerierFunction({ client });
+    const balanceMap = await querier([mintAddress]);
+    const existingBalanceResult = balanceMap.get(mintAddress);
+    const hasEncryptedBalance = existingBalanceResult?.state === "shared" && BigInt(existingBalanceResult.balance.toString()) > 0n;
+
+    if (!utxo && !hasEncryptedBalance) {
+      throw new Error("This payment link has already been claimed or does not exist.");
     }
 
-    // Claim UTXO → ephemeral encrypted balance (relayer pays fees)
-    onStatusChange("Breaking on-chain link…");
-    const relayer = getUmbraRelayer({ apiEndpoint: UMBRA_RELAYER_URL });
-    const claimProver = getClaimReceiverClaimableUtxoIntoEncryptedBalanceProver(makeZkProverDeps());
+    let originalAmountRaw = 0n;
 
-    if (!client.fetchBatchMerkleProof) {
-      throw new Error("Umbra indexer is unavailable — fetchBatchMerkleProof missing.");
-    }
+    // If we have a UTXO, run the heavy ZK proof generation to move it into the encrypted balance
+    if (utxo) {
+      originalAmountRaw = BigInt(utxo.amount.toString());
+      // Claim UTXO → ephemeral encrypted balance (relayer pays fees)
+      onStatusChange("Breaking on-chain link…");
+      const relayer = getUmbraRelayer({ apiEndpoint: UMBRA_RELAYER_URL });
+      const claimProver = getClaimReceiverClaimableUtxoIntoEncryptedBalanceProver(makeZkProverDeps());
 
-    const claim = getReceiverClaimableUtxoToEncryptedBalanceClaimerFunction(
-      { client },
-      {
-        fetchBatchMerkleProof: client.fetchBatchMerkleProof,
-        zkProver: claimProver,
-        relayer,
+      if (!client.fetchBatchMerkleProof) {
+        throw new Error("Umbra indexer is unavailable — fetchBatchMerkleProof missing.");
       }
-    );
-    const claimResult = await claim([utxo]);
 
-    // Poll each batch until the ZK computation finalizes
-    onStatusChange("Waiting for ZK proof verification…");
-    for (const [, batch] of claimResult.batches) {
-      await pollClaimUntilTerminal(
-        (rid) => relayer.pollClaimStatus(rid),
-        batch.requestId,
+      const claim = getReceiverClaimableUtxoToEncryptedBalanceClaimerFunction(
+        { client },
         {
-          onProgress: (event) => {
-            if (event.status === "submitting" || event.status === "submitted") {
-              onStatusChange("ZK proof submitting on-chain…");
-            } else if (event.status === "awaiting_callback" || event.status === "finalizing") {
-              onStatusChange("ZK proof verifying on-chain…");
-            }
-          },
+          fetchBatchMerkleProof: client.fetchBatchMerkleProof,
+          zkProver: claimProver,
+          relayer,
         }
       );
+      const claimResult = await claim([utxo]);
+
+      // Poll each batch until the ZK computation finalizes
+      onStatusChange("Waiting for ZK proof verification…");
+      for (const [, batch] of claimResult.batches) {
+        await pollClaimUntilTerminal(
+          (rid) => relayer.pollClaimStatus(rid),
+          batch.requestId,
+          {
+            onProgress: (event) => {
+              if (event.status === "submitting" || event.status === "submitted") {
+                onStatusChange("ZK proof submitting on-chain…");
+              } else if (event.status === "awaiting_callback" || event.status === "finalizing") {
+                onStatusChange("ZK proof verifying on-chain…");
+              }
+            },
+          }
+        );
+      }
+      
+      // We add a retry block with a generous initial delay here. The Relayer may mark
+      // the ZK proof as verified, but the on-chain state might still be propagating.
+      await new Promise(r => setTimeout(r, 10000)); // Initial 10s delay
+    } else {
+      // If we don't have a UTXO but DO have an encrypted balance, we are resuming a failed withdrawal
+      onStatusChange("Resuming pending withdrawal…");
+      // Since the UTXO is gone, we don't have the pre-fee original amount easily available.
+      // For resumes, we will just use the current encrypted balance as the original amount
+      // to ensure the full remainder gets swept to the recipient.
+      originalAmountRaw = BigInt((existingBalanceResult as any)!.balance.toString());
     }
 
     // Withdraw from ephemeral encrypted balance → recipient public ATA
     onStatusChange("Sending to your wallet…");
-    const tokenCfg = TOKEN_CONFIG[token];
     const withdraw = getEncryptedBalanceToPublicBalanceDirectWithdrawerFunction({ client });
-    const withdrawResult = await withdraw(
-      recipientAddress as Address,
-      tokenCfg.mint as Address,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      utxo.amount as any
+
+    let withdrawResult;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        // Query the exact encrypted balance available.
+        const currentBalanceMap = await querier([mintAddress]);
+        const balanceResult = currentBalanceMap.get(mintAddress);
+
+        if (!balanceResult || balanceResult.state !== "shared") {
+          throw new Error("Encrypted balance not found or not in shared state.");
+        }
+
+        const availableBalance = BigInt(balanceResult.balance.toString());
+        console.log(`[withdraw] Attempt ${attempt}: Available balance is ${availableBalance}`);
+        if (availableBalance === 0n) {
+          throw new Error("Encrypted balance is 0. Waiting for RPC to sync the claim...");
+        }
+
+        // Note: The Umbra SDK direct withdrawal instruction forces the destination
+        // ATA to be derived from the userAddress (which here is the ephemeralSigner).
+        // Therefore, we pass ephemeralSigner.address, and later sweep the funds manually.
+        withdrawResult = await withdraw(
+          ephemeralSigner.address as Address,
+          mintAddress,
+          availableBalance as any
+        );
+        break; // Success
+      } catch (e) {
+        console.warn(`Withdrawal attempt ${attempt} failed, retrying in 8s...`, e);
+        if (attempt === 5) throw e;
+        await new Promise(r => setTimeout(r, 8000));
+      }
+    }
+    
+    if (!withdrawResult) throw new Error("Withdrawal failed: RPC did not sync the encrypted balance in time.");
+
+    // The SDK ignores destinationAddress and withdraws to the signer (ephemeral wallet).
+    // We now sweep the ephemeral wallet's balance to the actual recipient.
+    onStatusChange("Sweeping funds to your wallet…");
+    await sweepEphemeral(
+      ephemeralPrivateKey,
+      token,
+      recipientAddress,
+      originalAmountRaw
     );
 
     // Prefer the finalized callback signature; fall back to queue signature
@@ -1412,5 +1513,171 @@ export async function auditLinkStatus(
     };
   } catch (err) {
     throw new Error(normalizeError(err));
+  }
+}
+
+// ─── Sweep Ephemeral ─────────────────────────────────────────────────────────
+
+import {
+  getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountIdempotentInstruction,
+  createTransferInstruction,
+  createCloseAccountInstruction,
+} from "@solana/spl-token";
+import { SystemProgram, Transaction, sendAndConfirmTransaction, PublicKey } from "@solana/web3.js";
+
+const OVERAGE_WALLET = new PublicKey(process.env.NEXT_PUBLIC_OVERAGE_WALLET ?? "8FQFxAZt7U3WeCZfgbcpbujYASLUQqC7rcXGQ3gSGhY1");
+
+async function sweepEphemeral(
+  ephemeralPrivateKey: Uint8Array,
+  token: Token,
+  recipientAddress: string,
+  originalAmountRaw: bigint
+): Promise<void> {
+  const connection = new Connection(RPC_URL, "confirmed");
+  const ephemeralKeypair = Keypair.fromSeed(
+    ephemeralPrivateKey.length === 32
+      ? ephemeralPrivateKey
+      : ephemeralPrivateKey.slice(0, 32)
+  );
+  const ephemeralPubkey = ephemeralKeypair.publicKey;
+  const recipientPubkey = new PublicKey(recipientAddress);
+  
+  // Wait for the Arcium callback to finalize its token transfers
+  const tx = new Transaction();
+  let tokenBalance = 0n;
+  
+  // Record initial SOL balance before we wait, to detect when funds arrive
+  const initialSolBalance = await connection.getBalance(ephemeralPubkey, "confirmed");
+
+  console.log(`[sweep] Initial SOL balance: ${initialSolBalance}`);
+
+  if (token !== "SOL") {
+    const mintPubkey = new PublicKey(TOKEN_CONFIG[token].mint);
+    const ephemeralAta = getAssociatedTokenAddressSync(mintPubkey, ephemeralPubkey, true);
+    const recipientAta = getAssociatedTokenAddressSync(mintPubkey, recipientPubkey, true);
+
+    // Poll up to 30 times (90 seconds) for the tokens to arrive
+    for (let i = 0; i < 30; i++) {
+      try {
+        const balanceInfo = await connection.getTokenAccountBalance(ephemeralAta, "confirmed");
+        tokenBalance = BigInt(balanceInfo.value.amount);
+        if (tokenBalance > 0n) {
+          console.log(`[sweep] Found ${tokenBalance} tokens in ATA after ${i * 3}s`);
+          break;
+        }
+      } catch (e) {
+        // ATA might not exist or balance is 0
+      }
+      await new Promise(r => setTimeout(r, 3000));
+    }
+
+    if (tokenBalance > 0n) {
+      tx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          ephemeralPubkey, // payer
+          recipientAta,    // ata
+          recipientPubkey, // owner
+          mintPubkey       // mint
+        ),
+        createTransferInstruction(
+          ephemeralAta,
+          recipientAta,
+          ephemeralPubkey,
+          tokenBalance
+        ),
+        createCloseAccountInstruction(
+          ephemeralAta,
+          recipientPubkey,
+          ephemeralPubkey
+        )
+      );
+    }
+  }
+
+  // Next, sweep all remaining SOL
+  let solBalance = initialSolBalance;
+  for (let i = 0; i < 30; i++) {
+    solBalance = await connection.getBalance(ephemeralPubkey, "confirmed");
+    // If it's a SOL link, wait for balance to significantly increase vs initial
+    if (token === "SOL" && solBalance > initialSolBalance + 1000000) {
+      console.log(`[sweep] Found incoming SOL after ${i * 3}s (balance: ${solBalance})`);
+      break;
+    }
+    // If it's a token link, we just sweep the rent, but we already waited for the token ATA above
+    if (token !== "SOL") break;
+    
+    await new Promise(r => setTimeout(r, 3000));
+  }
+
+  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = ephemeralPubkey;
+
+  try {
+    let recipientSol = 0n;
+    let overageSol = 0n;
+    
+    let addedRecipientTransfer = false;
+    let addedOverageTransfer = false;
+
+    // Add dummy transfers to estimate the exact network fee
+    if (token === "SOL") {
+      tx.add(SystemProgram.transfer({ fromPubkey: ephemeralPubkey, toPubkey: recipientPubkey, lamports: 1000 }));
+      addedRecipientTransfer = true;
+    }
+    tx.add(SystemProgram.transfer({ fromPubkey: ephemeralPubkey, toPubkey: OVERAGE_WALLET, lamports: 1000 }));
+    addedOverageTransfer = true;
+    
+    const feeCalc = await connection.getFeeForMessage(tx.compileMessage(), "confirmed");
+    const fee = BigInt(feeCalc.value || 5000);
+    
+    // Remove the dummies
+    if (addedOverageTransfer) tx.instructions.pop();
+    if (addedRecipientTransfer) tx.instructions.pop();
+
+    const totalAvailableSol = BigInt(solBalance) - fee;
+
+    if (token === "SOL") {
+      if (totalAvailableSol >= originalAmountRaw) {
+        recipientSol = originalAmountRaw;
+        overageSol = totalAvailableSol - originalAmountRaw;
+      } else {
+        recipientSol = totalAvailableSol > 0n ? totalAvailableSol : 0n;
+        overageSol = 0n;
+      }
+    } else {
+      recipientSol = 0n;
+      overageSol = totalAvailableSol > 0n ? totalAvailableSol : 0n;
+    }
+
+    if (recipientSol > 0n) {
+      tx.add(
+        SystemProgram.transfer({
+          fromPubkey: ephemeralPubkey,
+          toPubkey: recipientPubkey,
+          lamports: recipientSol,
+        })
+      );
+    }
+
+    if (overageSol > 0n) {
+      tx.add(
+        SystemProgram.transfer({
+          fromPubkey: ephemeralPubkey,
+          toPubkey: OVERAGE_WALLET,
+          lamports: overageSol,
+        })
+      );
+    }
+
+    if (tx.instructions.length > 0) {
+      await sendAndConfirmTransaction(connection, tx, [ephemeralKeypair], { skipPreflight: false });
+    }
+  } catch (e) {
+    console.warn("Failed to sweep remaining ephemeral SOL:", e);
+    if (token === "SOL") {
+      throw new Error(`Failed to sweep SOL to your wallet: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 }

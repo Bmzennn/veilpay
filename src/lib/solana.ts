@@ -40,7 +40,17 @@ export async function fundEphemeral(
   const ephemeralPubkey = new PublicKey(ephemeralAddress);
 
   const required = Math.round(EPHEMERAL_SOL_BUFFER * LAMPORTS_PER_SOL);
-  const existing = await connection.getBalance(ephemeralPubkey, "confirmed");
+  let existing = 0;
+  for (let i = 0; i < 5; i++) {
+    try {
+      existing = await connection.getBalance(ephemeralPubkey, "confirmed");
+      break;
+    } catch (e) {
+      if (i === 4) throw e;
+      console.warn(`[fundEphemeral] getBalance timeout, retrying in 3s... (${i + 1}/5)`);
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
   if (existing >= required) return;
 
   const lamports = required - existing;
@@ -49,7 +59,19 @@ export async function fundEphemeral(
     SystemProgram.transfer({ fromPubkey: senderPubkey, toPubkey: ephemeralPubkey, lamports })
   );
   tx.feePayer = senderPubkey;
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  let blockhash = "", lastValidBlockHeight = 0;
+  for (let i = 0; i < 5; i++) {
+    try {
+      const res = await connection.getLatestBlockhash("finalized");
+      blockhash = res.blockhash;
+      lastValidBlockHeight = res.lastValidBlockHeight;
+      break;
+    } catch (e) {
+      if (i === 4) throw e;
+      console.warn(`[fundEphemeral] getLatestBlockhash timeout, retrying in 3s... (${i + 1}/5)`);
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
   tx.recentBlockhash = blockhash;
 
   // Wallet Standard signTransaction uses rest params (...inputs), not an array arg.
@@ -67,7 +89,7 @@ export async function fundEphemeral(
   const { signedTransaction } = results[0];
 
   try {
-    const sig = await connection.sendRawTransaction(signedTransaction);
+    const sig = await connection.sendRawTransaction(signedTransaction, { skipPreflight: false, maxRetries: 0 });
     await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

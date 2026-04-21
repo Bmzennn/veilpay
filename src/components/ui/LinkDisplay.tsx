@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Copy, Check, Share2, Lock, UserCheck } from "lucide-react";
 
@@ -14,6 +14,11 @@ interface LinkDisplayProps {
 
 export function LinkDisplay({ link, amount, token, expiresAt, lockedTo }: LinkDisplayProps) {
   const [copied, setCopied] = useState(false);
+  const [daysLeft, setDaysLeft] = useState<number | null>(null);
+
+  useEffect(() => {
+    setDaysLeft(Math.ceil((expiresAt - Date.now()) / (1000 * 60 * 60 * 24)));
+  }, [expiresAt]);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(link);
@@ -28,8 +33,6 @@ export function LinkDisplay({ link, amount, token, expiresAt, lockedTo }: LinkDi
       handleCopy();
     }
   };
-
-  const daysLeft = Math.ceil((expiresAt - Date.now()) / (1000 * 60 * 60 * 24));
 
   return (
     <motion.div

@@ -11,14 +11,14 @@ export const NETWORK =
   "devnet";
 
 // Browser-relative path — requests go through /api/indexer-proxy which
-// server-side-forwards to https://utxo-indexer.api.umbraprivacy.com.
+// server-side-forwards to https://utxo-indexer.api-devnet.umbraprivacy.com.
 // The upstream sends no CORS headers, so direct browser fetches are blocked.
 export const UMBRA_INDEXER_URL =
   process.env.NEXT_PUBLIC_UMBRA_INDEXER_URL ?? "/api/indexer-proxy";
 
 export const UMBRA_RELAYER_URL =
   process.env.NEXT_PUBLIC_UMBRA_RELAYER_URL ??
-  "https://relayer.api.umbraprivacy.com";
+  "https://relayer.api-devnet.umbraprivacy.com";
 
 export const LINK_EXPIRY_DAYS = Number(
   process.env.NEXT_PUBLIC_LINK_EXPIRY_DAYS ?? 7
@@ -30,9 +30,10 @@ export const TOKEN_CONFIG: Record<
 > = {
   USDC: {
     mint:
-      process.env.NEXT_PUBLIC_USDC_MINT ??
-      "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    decimals: 6,
+      NETWORK === "mainnet"
+        ? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        : "GvUQDFLWYH4QHKYot787616f61m1m5eZofhYKyaBkPn9",
+    decimals: NETWORK === "mainnet" ? 6 : 9,
     symbol: "USDC",
     color: "#2775CA",
   },
@@ -47,4 +48,4 @@ export const TOKEN_CONFIG: Record<
 };
 
 /** Minimum SOL to send to ephemeral account to cover registration + withdrawal fees */
-export const EPHEMERAL_SOL_BUFFER = 0.015; // SOL
+export const EPHEMERAL_SOL_BUFFER = 0.018; // SOL

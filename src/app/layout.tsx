@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "VeilPay — Private Payments on Solana",
   description:
     "Send and receive private crypto payments via shareable links. Zero on-chain link between sender and recipient.",
+  referrer: "no-referrer",
 };
 
 export default function RootLayout({

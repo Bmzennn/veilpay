@@ -1,7 +1,7 @@
 /**
  * /api/indexer-proxy — Server-side proxy for the Umbra UTXO indexer.
  *
- * The indexer (utxo-indexer.api.umbraprivacy.com) does not send CORS headers,
+ * The indexer (utxo-indexer.api-devnet.umbraprivacy.com) does not send CORS headers,
  * so browser fetches from the SDK are blocked. This catch-all route forwards
  * GET/POST requests server-side and streams the binary protobuf response back.
  *
@@ -12,7 +12,7 @@
 
 import type { NextRequest } from "next/server";
 
-const UPSTREAM = "https://utxo-indexer.api.umbraprivacy.com";
+const UPSTREAM = "https://utxo-indexer.api-devnet.umbraprivacy.com";
 
 const FORWARD_HEADERS = ["accept", "content-type", "x-response-layout"];
 

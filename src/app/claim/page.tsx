@@ -9,7 +9,7 @@
  *   ?to=<address>  — wallet-locked: only this address may claim
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Gift, Shield, Sparkles, AlertTriangle, UserCheck } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -17,6 +17,7 @@ import { LiquidButton } from "@/components/ui/LiquidButton";
 import { WalletButton } from "@/components/WalletButton";
 import { useWalletContext } from "@/components/WalletContext";
 import { scanForUtxo, claimPaymentLink, parseClaimHash } from "@/lib/umbra";
+import { NETWORK } from "@/lib/constants";
 import type { Wallet, WalletAccount } from "@wallet-standard/core";
 import type { ClaimStep, Token } from "@/types";
 
@@ -45,35 +46,49 @@ export default function ClaimPage() {
   const [token, setToken] = useState<Token>("USDC");
   const [txSig, setTxSig] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const initialized = useRef(false);
 
   // Parse hash + query params on client only
   useEffect(() => {
-    const raw = window.location.hash.replace("#", "");
-    if (!raw) {
-      setStep("preview");
-      setError("No claim key found in this link.");
-      return;
-    }
+    if (initialized.current) return;
+    initialized.current = true;
 
-    const params = new URLSearchParams(window.location.search);
+    // Use a small timeout to allow initial render to complete
+    // and avoid synchronous setState warnings in strict mode
+    setTimeout(() => {
+      const raw = window.location.hash.replace("#", "");
+      if (!raw) {
+        setError("No claim key found in this link.");
+        setStep("preview");
+        return;
+      }
 
-    // Check expiry
-    const expMs = params.get("exp");
-    if (expMs && Date.now() > Number(expMs)) {
-      setStep("preview");
-      setError("This payment link has expired.");
-      return;
-    }
+      const params = new URLSearchParams(window.location.search);
 
-    setLinkId(params.get("lid"));
+      // Check expiry
+      const expMs = params.get("exp");
+      if (expMs && Date.now() > Number(expMs)) {
+        setError("This payment link has expired.");
+        setStep("preview");
+        return;
+      }
 
-    // Wallet-lock param
-    const to = params.get("to");
-    if (to) setLockedTo(to);
+      setLinkId(params.get("lid"));
 
-    const { claimSecret: secret, token: parsedToken } = parseClaimHash(raw);
-    setClaimSecret(secret);
-    setToken(parsedToken);
+      // Wallet-lock param
+      const to = params.get("to");
+      if (to) setLockedTo(to);
+
+      const { claimSecret: secret, token: parsedToken } = parseClaimHash(raw);
+      setClaimSecret(secret);
+      setToken(parsedToken);
+
+      // Security: Remove the private key from the URL hash so it doesn't leak
+      // to browser history or via Referer headers to external links.
+      if (window.history.replaceState) {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      }
+    }, 0);
   }, []);
 
   // Auto-scan when secret is available
@@ -111,7 +126,7 @@ export default function ClaimPage() {
     return () => {
       cancelled = true;
     };
-  }, [claimSecret]);
+  }, [claimSecret, token]);
 
   // Wallet-lock check: connected wallet must match the locked address
   const walletMismatch =
@@ -437,7 +452,7 @@ export default function ClaimPage() {
 
               {txSig && (
                 <a
-                  href={`https://solscan.io/tx/${txSig}?cluster=devnet`}
+                  href={`https://solscan.io/tx/${txSig}${NETWORK === "mainnet" ? "" : `?cluster=${NETWORK}`}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[11px] text-[#00b3ff80] hover:text-[#00b3ff] transition-colors"

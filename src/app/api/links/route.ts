@@ -41,7 +41,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     !("amount" in body) ||
     !("token" in body) ||
     !("created_at" in body) ||
-    !("expires_at" in body)
+    !("expires_at" in body) ||
+    !("sender_address" in body) ||
+    !("signature" in body) ||
+    !("timestamp" in body)
   ) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
@@ -55,7 +58,31 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     created_at: number;
     expires_at: number;
     locked_to?: string;
+    sender_address: string;
+    signature: string;
+    timestamp: number;
   };
+
+  // Replay protection — reject signatures older than 5 minutes
+  const ageSeconds = Math.abs(Math.floor(Date.now() / 1000) - record.timestamp);
+  if (ageSeconds > 300) {
+    return NextResponse.json({ error: "Signature has expired" }, { status: 400 });
+  }
+
+  // Verify Ed25519 signature
+  // Message: "Authorize VeilPay Link: {id} by {sender_address} at {timestamp}"
+  const message = `Authorize VeilPay Link: ${record.id} by ${record.sender_address} at ${record.timestamp}`;
+  try {
+    const pubkeyBytes = new PublicKey(record.sender_address).toBytes();
+    const msgBytes = new TextEncoder().encode(message);
+    const sigBytes = Buffer.from(record.signature, "base64");
+    const valid = ed25519.verify(sigBytes, msgBytes, pubkeyBytes);
+    if (!valid) {
+      return NextResponse.json({ error: "Invalid wallet signature" }, { status: 403 });
+    }
+  } catch {
+    return NextResponse.json({ error: "Signature verification failed" }, { status: 400 });
+  }
 
   const { error } = await client.from("links").insert({
     id: record.id,
@@ -124,7 +151,6 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Missing id param" }, { status: 400 });
   }
 
-  // Body is optional for general (unlocked) links
   let body: ClaimBody = {};
   try {
     body = (await req.json()) as ClaimBody;
