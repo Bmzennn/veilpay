@@ -82,49 +82,56 @@ type U64 = { readonly [SubBrandSymbol]: "U64" }; declare const SubBrandSymbol: u
 // keeps the files cached across refreshes.
 
 const CDN_BASE = "https://d3j9fjdkre529f.cloudfront.net";
+const ZK_CACHE_NAME = "veilpay-zk-v2";
 
-export function makeZkProverDeps() {
-  return {
-    assetProvider: getProxiedZkAssetProvider(),
-    callbacks: {
-      onZkeyDownload: {
-        pre: async () => console.log("[zkProver] downloading zkey (may take 30-60s on first load)…"),
-        post: async () => console.log("[zkProver] zkey download complete"),
-      },
-      onWasmDownload: {
-        pre: async () => console.log("[zkProver] downloading wasm…"),
-        post: async () => console.log("[zkProver] wasm download complete"),
-      },
-      onWitnessGeneration: {
-        pre: async () => console.log("[zkProver] generating witness…"),
-        post: async () => console.log("[zkProver] witness done"),
-      },
-      onProofComputation: {
-        pre: async () => console.log("[zkProver] computing ZK proof (may take 10-30s)…"),
-        post: async () => console.log("[zkProver] proof done"),
-      },
-    },
-  };
-}
-
-type ManifestEntry = { url: string };
-type ManifestAsset = ManifestEntry | Record<string, ManifestEntry>;
-type Manifest = { assets: Record<string, ManifestAsset> };
-
-function getProxiedZkAssetProvider(): IZkAssetProvider {
+/**
+ * Enhanced ZK asset provider with persistent browser caching.
+ * Uses the Cache Storage API to store massive .zkey files (>50MB) 
+ * so they are never re-downloaded after the first successful load.
+ */
+function getPersistentZkAssetProvider(): IZkAssetProvider {
   let manifestCache: Manifest | null = null;
+
+  const fetchWithCache = async (url: string): Promise<string> => {
+    if (typeof window === "undefined") return url;
+
+    try {
+      const cache = await caches.open(ZK_CACHE_NAME);
+      
+      // Check if we already have this specific file in persistent storage
+      const cachedResponse = await cache.match(url);
+      if (cachedResponse && cachedResponse.ok) {
+        console.log(`[zkCache] Persistent hit: ${url.split('/').pop()}`);
+        const blob = await cachedResponse.blob();
+        return URL.createObjectURL(blob);
+      }
+
+      // Not in cache, fetch via proxy and store it
+      console.log(`[zkCache] Cache miss, downloading: ${url.split('/').pop()}`);
+      const proxyUrl = `/api/zk-proxy?url=${encodeURIComponent(url)}`;
+      const response = await fetch(proxyUrl);
+      
+      if (!response.ok) throw new Error(`Failed to fetch ZK asset: ${response.statusText}`);
+
+      // We clone the response because .put() consumes the body
+      await cache.put(url, response.clone());
+      
+      const blob = await response.blob();
+      return URL.createObjectURL(blob);
+    } catch (e) {
+      console.warn("[zkCache] Persistent cache failed, falling back to direct proxy:", e);
+      return `/api/zk-proxy?url=${encodeURIComponent(url)}`;
+    }
+  };
 
   return {
     async getAssetUrls(type: string, variant?: string): Promise<{ zkeyUrl: string; wasmUrl: string }> {
-      console.log("[zkAsset] getAssetUrls called:", type, variant ?? "");
       if (!manifestCache) {
-        console.log("[zkAsset] fetching manifest…");
         const res = await fetch(
           `/api/zk-proxy?url=${encodeURIComponent(`${CDN_BASE}/manifest.json`)}`
         );
         if (!res.ok) throw new Error(`ZK manifest fetch failed (${res.status})`);
         manifestCache = (await res.json()) as Manifest;
-        console.log("[zkAsset] manifest loaded, keys:", Object.keys(manifestCache.assets));
       }
 
       const assetEntry = manifestCache.assets[type];
@@ -142,12 +149,40 @@ function getProxiedZkAssetProvider(): IZkAssetProvider {
       const fullZkeyUrl = rawUrl.startsWith("http") ? rawUrl : `${CDN_BASE}/${rawUrl}`;
       const fullWasmUrl = fullZkeyUrl.replace(/\.zkey$/i, ".wasm");
 
-      console.log("[zkAsset] resolved:", type, "→", fullZkeyUrl.split("/").pop());
-      return {
-        zkeyUrl: `/api/zk-proxy?url=${encodeURIComponent(fullZkeyUrl)}`,
-        wasmUrl: `/api/zk-proxy?url=${encodeURIComponent(fullWasmUrl)}`,
-      };
+      // Parallel fetch/cache for both files
+      const [zkeyUrl, wasmUrl] = await Promise.all([
+        fetchWithCache(fullZkeyUrl),
+        fetchWithCache(fullWasmUrl)
+      ]);
+
+      return { zkeyUrl, wasmUrl };
     },
+  };
+}
+
+export function makeZkProverDeps() {
+  return {
+    assetProvider: getPersistentZkAssetProvider(),
+    callbacks: {
+      onZkeyDownload: {
+        pre: async () => console.log("[zkProver] preparing zkey…"),
+        post: async () => console.log("[zkProver] zkey ready"),
+      },
+      onWasmDownload: {
+        pre: async () => console.log("[zkProver] preparing wasm…"),
+        post: async () => console.log("[zkProver] wasm ready"),
+      },
+      onWitnessGeneration: {
+        pre: async () => console.log("[zkProver] generating witness…"),
+        post: async () => console.log("[zkProver] witness done"),
+      },
+      onProofComputation: {
+        pre: async () => console.log("[zkProver] computing ZK proof (may take 10-30s)…"),
+        post: async () => console.log("[zkProver] proof done"),
+      },
+    },
+  };
+}
   };
 }
 
