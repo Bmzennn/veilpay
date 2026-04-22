@@ -69,11 +69,16 @@ export default function DashboardPage() {
       ];
       const balances = await querier(mints);
 
+      const getSafeBalance = (mint: Address) => {
+          const res = balances.get(mint);
+          return (res && "balance" in res) ? BigInt(res.balance.toString()) : 0n;
+      };
+
       setStats({
         pendingCount: publicReceived.length,
         pendingSol,
-        shieldedSol: BigInt(balances.get(mints[0])?.balance?.toString() || "0"),
-        shieldedUsdc: BigInt(balances.get(mints[1])?.balance?.toString() || "0")
+        shieldedSol: getSafeBalance(mints[0]),
+        shieldedUsdc: getSafeBalance(mints[1])
       });
 
       setStatus("");
@@ -135,7 +140,7 @@ export default function DashboardPage() {
 
       for (const mint of mints) {
         const bal = balances.get(mint);
-        if (bal?.state === "shared" && BigInt(bal.balance.toString()) > 0n) {
+        if (bal && "balance" in bal && BigInt(bal.balance.toString()) > 0n) {
             await withdraw(account.address as Address, mint, bal.balance as any);
         }
       }
