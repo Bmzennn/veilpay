@@ -42,3 +42,6 @@ next-env.d.ts
 
 # Debug scripts
 scripts/
+
+#private testing skills
+skills/

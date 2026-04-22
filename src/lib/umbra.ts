@@ -96,34 +96,47 @@ type Manifest = { assets: Record<string, ManifestAsset> };
 function getPersistentZkAssetProvider(): IZkAssetProvider {
   let manifestCache: Manifest | null = null;
 
-  const fetchWithCache = async (url: string): Promise<string> => {
+  const fetchWithCache = async (url: string, attempt = 1): Promise<string> => {
     if (typeof window === "undefined") return url;
 
     try {
       const cache = await caches.open(ZK_CACHE_NAME);
       
-      // Check if we already have this specific file in persistent storage
       const cachedResponse = await cache.match(url);
       if (cachedResponse && cachedResponse.ok) {
-        console.log(`[zkCache] Persistent hit: ${url.split('/').pop()}`);
-        const blob = await cachedResponse.blob();
-        return URL.createObjectURL(blob);
+        // Double check it's not a tiny error response that got cached
+        const contentLength = cachedResponse.headers.get("content-length");
+        if (!contentLength || parseInt(contentLength) > 1000) {
+            console.log(`[zkCache] Persistent hit: ${url.split('/').pop()}`);
+            const blob = await cachedResponse.blob();
+            return URL.createObjectURL(blob);
+        }
+        await cache.delete(url); // Clean up bad entry
       }
 
-      // Not in cache, fetch via proxy and store it
-      console.log(`[zkCache] Cache miss, downloading: ${url.split('/').pop()}`);
+      console.log(`[zkCache] Cache miss (attempt ${attempt}), downloading: ${url.split('/').pop()}`);
       const proxyUrl = `/api/zk-proxy?url=${encodeURIComponent(url)}`;
       const response = await fetch(proxyUrl);
       
-      if (!response.ok) throw new Error(`Failed to fetch ZK asset: ${response.statusText}`);
+      if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Proxy error (${response.status}): ${errorText.slice(0, 100)}`);
+      }
 
-      // We clone the response because .put() consumes the body
-      await cache.put(url, response.clone());
+      // Ensure we don't cache a 502/error body accidentally
+      if (response.status === 200) {
+        await cache.put(url, response.clone());
+      }
       
       const blob = await response.blob();
       return URL.createObjectURL(blob);
-    } catch (e) {
-      console.warn("[zkCache] Persistent cache failed, falling back to direct proxy:", e);
+    } catch (e: any) {
+      console.warn(`[zkCache] Download failed (attempt ${attempt}):`, e.message);
+      if (attempt < 3) {
+          console.log("[zkCache] Retrying in 2s...");
+          await new Promise(r => setTimeout(r, 2000));
+          return fetchWithCache(url, attempt + 1);
+      }
       return `/api/zk-proxy?url=${encodeURIComponent(url)}`;
     }
   };
@@ -198,6 +211,20 @@ export async function preloadClaimAssets() {
   } catch (e) {
     console.warn("[zkCache] Proactive pre-load failed (will retry on-demand):", e);
   }
+}
+
+/**
+ * Manually wipes the local ZK persistent cache.
+ * Useful for debugging or recovering from corrupted downloads.
+ */
+export async function clearZkCache() {
+    if (typeof window === "undefined") return;
+    try {
+        await caches.delete(ZK_CACHE_NAME);
+        console.log("[zkCache] Local storage wiped.");
+    } catch (e) {
+        console.error("[zkCache] Failed to clear:", e);
+    }
 }
 
 export function makeZkProverDeps() {

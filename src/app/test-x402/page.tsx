@@ -17,7 +17,7 @@ import type { Address } from "@solana/kit";
 import { motion, AnimatePresence } from "framer-motion";
 import { Shield, Zap, Terminal, Activity } from "lucide-react";
 
-const INVOICE_AMOUNT_USDC = 0.5;
+const INVOICE_AMOUNT_SOL = 0.1;
 
 export default function TestX402Page() {
   const { wallet, account, connected } = useWalletContext();
@@ -175,7 +175,7 @@ export default function TestX402Page() {
             disabled={!connected}
           >
             <Zap className="w-4 h-4" />
-            Purchase Access ({INVOICE_AMOUNT_USDC} USDC)
+            Purchase Access ({INVOICE_AMOUNT_SOL} SOL)
           </LiquidButton>
 
           {!connected && (

@@ -10,9 +10,9 @@ if (!SERVER_PRIVATE_KEY_BASE58 || !SERVER_SOLANA_ADDRESS) {
   throw new Error("Missing X402_SERVER_PRIVATE_KEY or NEXT_PUBLIC_X402_SERVER_ADDRESS in environment variables.");
 }
 
-const INVOICE_AMOUNT_USDC = 0.5; // USDC
-const USDC_DECIMALS = 9; // Devnet USDC decimals
-const EXPECTED_AMOUNT_RAW = BigInt(Math.round(INVOICE_AMOUNT_USDC * 10 ** USDC_DECIMALS));
+const INVOICE_AMOUNT_SOL = 0.1; // SOL
+const SOL_DECIMALS = 9;
+const EXPECTED_AMOUNT_RAW = BigInt(Math.round(INVOICE_AMOUNT_SOL * 10 ** SOL_DECIMALS));
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("Authorization");
@@ -26,8 +26,8 @@ export async function GET(req: NextRequest) {
         error: "Payment Required",
         message: "This is a premium endpoint. Please remit payment via Umbra Stealth Deposit.",
         invoice: {
-          amount: INVOICE_AMOUNT_USDC,
-          token: "USDC",
+          amount: INVOICE_AMOUNT_SOL,
+          token: "SOL",
           destination: SERVER_SOLANA_ADDRESS,
           invoiceId: invoiceIdHex,
         },
@@ -48,6 +48,14 @@ export async function GET(req: NextRequest) {
   }
 
   const [proofTxSig, depositTxSig, invoiceIdHex] = tokenParts;
+
+  // Basic format validation to prevent DoS via RPC flooding
+  const sigRegex = /^[1-9A-HJ-NP-Za-km-z]{32,88}$/;
+  const hexRegex = /^[0-9a-fA-F]{64}$/;
+
+  if (!sigRegex.test(proofTxSig) || !sigRegex.test(depositTxSig) || !hexRegex.test(invoiceIdHex)) {
+    return NextResponse.json({ error: "Invalid payment proof format." }, { status: 400 });
+  }
 
   try {
     const connection = new Connection(RPC_URL, "confirmed");
@@ -74,7 +82,8 @@ export async function GET(req: NextRequest) {
         secretData: "The AI agent has successfully navigated the ZK shielding pool.",
         paymentReceipt: {
           depositTx: depositTxSig,
-          amountPaid: INVOICE_AMOUNT_USDC,
+          amountPaid: INVOICE_AMOUNT_SOL,
+          token: "SOL"
         },
       },
     });
