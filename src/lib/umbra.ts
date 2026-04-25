@@ -1880,21 +1880,16 @@ async function ensureEphemeralAta(
 
 // ─── Sweep Ephemeral ─────────────────────────────────────────────────────────
 
-const _overageAddr = process.env.NEXT_PUBLIC_OVERAGE_WALLET;
-if (!_overageAddr) {
-  throw new Error(
-    "NEXT_PUBLIC_OVERAGE_WALLET is not set. Configure this in your environment before deploying — " +
-    "without it, sweep overages have nowhere to go and funds will be lost."
-  );
-}
-const OVERAGE_WALLET = new PublicKey(_overageAddr);
-
 async function sweepEphemeral(
   ephemeralPrivateKey: Uint8Array,
   token: Token,
   recipientAddress: string,
   originalAmountRaw: bigint
 ): Promise<void> {
+  const _overageAddr = process.env.NEXT_PUBLIC_OVERAGE_WALLET;
+  if (!_overageAddr) throw new Error("NEXT_PUBLIC_OVERAGE_WALLET env var is not set.");
+  const OVERAGE_WALLET = new PublicKey(_overageAddr);
+
   const connection = new Connection(RPC_URL, "confirmed");
   const ephemeralKeypair = Keypair.fromSeed(
     ephemeralPrivateKey.length === 32

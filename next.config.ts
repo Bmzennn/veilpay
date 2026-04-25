@@ -25,20 +25,23 @@ const securityHeaders = [
       "font-src 'self' https://fonts.gstatic.com",
       // Images: self + data URIs (QR code data URLs) + token logos served locally
       "img-src 'self' data: blob:",
-      // Connect: Supabase, Umbra services, Solana RPC/WS, CloudFront ZK CDN
+      // Connect: Supabase, all Umbra services (wildcard covers any subdomain the SDK uses),
+      // all Solana RPC endpoints, CloudFront ZK CDN, Solscan
       [
         "connect-src 'self'",
         "https://*.supabase.co",
         "wss://*.supabase.co",
-        "https://relayer.api-devnet.umbraprivacy.com",
-        "https://relayer.api.umbraprivacy.com",
-        "https://utxo-indexer.api-devnet.umbraprivacy.com",
-        "https://utxo-indexer.api.umbraprivacy.com",
-        "https://d3j9fjdkre529f.cloudfront.net",
-        "https://api.devnet.solana.com",
-        "wss://api.devnet.solana.com",
-        "https://api.mainnet-beta.solana.com",
-        "wss://api.mainnet-beta.solana.com",
+        "https://*.umbraprivacy.com",   // covers relayer, indexer, and any other SDK endpoints
+        "wss://*.umbraprivacy.com",
+        "https://*.arcium.com",         // Arcium MPC endpoints used by Umbra SDK
+        "wss://*.arcium.com",
+        "https://d3j9fjdkre529f.cloudfront.net",  // ZK circuit CDN
+        "https://*.solana.com",         // covers devnet, mainnet-beta, testnet
+        "wss://*.solana.com",
+        "https://*.helius.xyz",         // common paid RPC providers
+        "https://*.helius-rpc.com",
+        "https://*.quicknode.com",
+        "https://*.alchemy.com",
         "https://solscan.io",
       ].join(" "),
       "worker-src 'self' blob:",  // snarkjs spawns workers
