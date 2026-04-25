@@ -470,6 +470,7 @@ footer { padding:48px 0 32px;border-top:1px solid var(--hairline);margin-top:32p
   /* Theme floater: move to bottom-left, icon-only */
   .theme-floater { top:auto;bottom:16px;right:auto;left:16px;transform:none;padding:8px; }
   .theme-floater-label { display:none; }
+  .nav-docs-btn { display:none; }
 
   /* Typography */
   .h2 { font-size:clamp(28px,8vw,40px); }

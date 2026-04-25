@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { BackgroundStage } from "@/components/BackgroundStage";
 import { VPLogo } from "@/components/AppShell";
-import { Sun, Moon, Shield, Link2, EyeOff, Zap, Key, ArrowRight } from "lucide-react";
+import { Sun, Moon, Shield, Link2, EyeOff, Zap, Key, ArrowRight, Menu, X } from "lucide-react";
 
 // ─── Theme floater ───────────────────────────────────────────────────────────
 
@@ -35,22 +35,69 @@ function ThemeFloater() {
 // ─── Nav ─────────────────────────────────────────────────────────────────────
 
 function Nav() {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => setMenuOpen(false);
+    window.addEventListener("scroll", close, { once: true });
+    return () => window.removeEventListener("scroll", close);
+  }, [menuOpen]);
+
+  const links = [
+    { label: "Features", href: "#features" },
+    { label: "Audit",    href: "/audit" },
+    { label: "Docs",     href: "/docs" },
+  ];
+
   return (
     <nav className="nav">
       <div className="nav-inner glass">
         <VPLogo />
-        <div className="nav-links" style={{ display: "flex" }}>
-          <a className="nav-link" href="#features">Features</a>
-          <a className="nav-link" href="/audit">Audit</a>
-          <a className="nav-link" href="/docs">Docs</a>
+
+        {/* Desktop links */}
+        <div className="nav-links">
+          {links.map((l) => (
+            <a key={l.label} className="nav-link" href={l.href}>{l.label}</a>
+          ))}
         </div>
+
         <div className="nav-actions">
-          <a className="btn btn-ghost btn-sm" href="/docs">Open docs</a>
+          <a className="btn btn-ghost btn-sm nav-docs-btn" href="/docs">Open docs</a>
           <a className="btn btn-primary btn-sm" href="/create">
             Get started <ArrowRight size={14} />
           </a>
+          {/* Hamburger — mobile only */}
+          <button
+            className="nav-burger btn btn-glass btn-sm"
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-label="Toggle menu"
+          >
+            {menuOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
         </div>
       </div>
+
+      {/* Mobile dropdown */}
+      {menuOpen && (
+        <div className="nav-mobile glass">
+          {links.map((l) => (
+            <a
+              key={l.label}
+              className="nav-mobile-link"
+              href={l.href}
+              onClick={() => setMenuOpen(false)}
+            >
+              {l.label}
+            </a>
+          ))}
+          <div style={{ padding: "8px 8px 4px", borderTop: "0.5px solid var(--hairline)", marginTop: 4 }}>
+            <a className="btn btn-primary btn-sm" href="/create" style={{ width: "100%", justifyContent: "center" }}>
+              Get started <ArrowRight size={14} />
+            </a>
+          </div>
+        </div>
+      )}
     </nav>
   );
 }
