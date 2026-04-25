@@ -143,7 +143,6 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
       const message = e instanceof Error ? e.message : String(e);
       warn(`[zkCache] Download failed (attempt ${attempt}):`, message);
       if (attempt < 3) {
-          log("[zkCache] Retrying in 2s...");
           await new Promise(r => setTimeout(r, 2000));
           return fetchWithCache(url, attempt + 1);
       }
@@ -949,7 +948,9 @@ export async function registerAccount(
   log("[registerAccount] start", signer.address.slice(0, 8));
   let client: Awaited<ReturnType<typeof makeClient>>;
   try {
-    client = await makeClient(signer);
+    // Use skip-preflight for ephemeral registration — the polling forwarder's
+    // preflight simulation can fail on congested devnet, causing "Failed to fetch".
+    client = await makeClient(signer, { skipPreflight: true });
   } catch (e) {
     throw new Error(`[3a makeClient] ${e instanceof Error ? e.message : String(e)}`);
   }

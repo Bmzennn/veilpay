@@ -1,14 +1,11 @@
 /**
- * Debug-gated logger.
- *
- * In production all log() calls are no-ops.
- * Set NEXT_PUBLIC_DEBUG=true in .env.local to enable during development.
- *
- * console.error() is always active — it's used only for genuine error paths
- * and is never called with sensitive data.
+ * Environment-aware logger.
+ * - Development (NODE_ENV !== 'production'): always logs
+ * - Production: silent unless NEXT_PUBLIC_DEBUG=true
  */
 
-const DEBUG = process.env.NEXT_PUBLIC_DEBUG === "true";
+const isDev = process.env.NODE_ENV !== "production";
+const DEBUG = isDev || process.env.NEXT_PUBLIC_DEBUG === "true";
 
 export const log = DEBUG
   ? (...args: unknown[]) => console.log(...args)

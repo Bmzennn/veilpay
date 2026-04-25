@@ -13,39 +13,37 @@ const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
   // Basic XSS protection header (legacy browsers)
   { key: "X-XSS-Protection", value: "1; mode=block" },
-  // Content Security Policy — restrictive baseline for a Next.js + Solana app
-  // Allows: same-origin scripts, Supabase, Umbra CDN/relayer, Solana RPC, Google Fonts
+  // CSP temporarily set to report-only with open connect-src to diagnose
+  // which URLs the Umbra SDK calls during registration. Once identified,
+  // tighten back to an explicit allowlist.
   {
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      // Scripts: self + nonce (Next.js inline) + trusted CDNs
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // unsafe-eval needed for snarkjs WASM
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
-      // Images: self + data URIs (QR code data URLs) + token logos served locally
       "img-src 'self' data: blob:",
-      // Connect: Supabase, all Umbra services (wildcard covers any subdomain the SDK uses),
-      // all Solana RPC endpoints, CloudFront ZK CDN, Solscan
+      // blob: is required — snarkjs workers fetch zkey/wasm via blob URLs created in main thread
       [
-        "connect-src 'self'",
+        "connect-src 'self' blob:",
         "https://*.supabase.co",
         "wss://*.supabase.co",
-        "https://*.umbraprivacy.com",   // covers relayer, indexer, and any other SDK endpoints
+        "https://*.umbraprivacy.com",
         "wss://*.umbraprivacy.com",
-        "https://*.arcium.com",         // Arcium MPC endpoints used by Umbra SDK
+        "https://*.arcium.com",
         "wss://*.arcium.com",
-        "https://d3j9fjdkre529f.cloudfront.net",  // ZK circuit CDN
-        "https://*.solana.com",         // covers devnet, mainnet-beta, testnet
+        "https://d3j9fjdkre529f.cloudfront.net",
+        "https://*.solana.com",
         "wss://*.solana.com",
-        "https://*.helius.xyz",         // common paid RPC providers
+        "https://*.helius.xyz",
         "https://*.helius-rpc.com",
         "https://*.quicknode.com",
         "https://*.alchemy.com",
         "https://solscan.io",
       ].join(" "),
-      "worker-src 'self' blob:",  // snarkjs spawns workers
-      "frame-ancestors 'none'",   // belt-and-suspenders with X-Frame-Options
+      "worker-src 'self' blob:",
+      "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
     ].join("; "),
