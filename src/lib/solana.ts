@@ -19,6 +19,7 @@ import {
 import type { Wallet, WalletAccount } from "@wallet-standard/core";
 import { getUmbraRelayer } from "@umbra-privacy/sdk";
 import { RPC_URL, EPHEMERAL_SOL_BUFFER, UMBRA_RELAYER_URL } from "./constants";
+import { log, warn } from "./logger";
 
 function getConnection(): Connection {
   return new Connection(RPC_URL, "confirmed");
@@ -47,7 +48,7 @@ export async function fundEphemeral(
       break;
     } catch (e) {
       if (i === 4) throw e;
-      console.warn(`[fundEphemeral] getBalance timeout, retrying in 3s... (${i + 1}/5)`);
+      warn(`[fundEphemeral] getBalance timeout, retrying in 3s... (${i + 1}/5)`);
       await new Promise(r => setTimeout(r, 3000));
     }
   }
@@ -68,7 +69,7 @@ export async function fundEphemeral(
       break;
     } catch (e) {
       if (i === 4) throw e;
-      console.warn(`[fundEphemeral] getLatestBlockhash timeout, retrying in 3s... (${i + 1}/5)`);
+      warn(`[fundEphemeral] getLatestBlockhash timeout, retrying in 3s... (${i + 1}/5)`);
       await new Promise(r => setTimeout(r, 3000));
     }
   }
@@ -89,7 +90,7 @@ export async function fundEphemeral(
   const { signedTransaction } = results[0];
 
   try {
-    const sig = await connection.sendRawTransaction(signedTransaction, { skipPreflight: false, maxRetries: 0 });
+    const sig = await connection.sendRawTransaction(signedTransaction, { skipPreflight: true });
     await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

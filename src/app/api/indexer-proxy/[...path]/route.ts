@@ -1,9 +1,13 @@
 /**
  * /api/indexer-proxy — Server-side proxy for the Umbra UTXO indexer.
  *
- * The indexer (utxo-indexer.api-devnet.umbraprivacy.com) does not send CORS headers,
- * so browser fetches from the SDK are blocked. This catch-all route forwards
- * GET/POST requests server-side and streams the binary protobuf response back.
+ * The indexer does not send CORS headers, so browser fetches from the SDK are
+ * blocked. This catch-all route forwards GET/POST requests server-side and
+ * streams the binary protobuf response back.
+ *
+ * Endpoints:
+ *   mainnet → utxo-indexer.api.umbraprivacy.com
+ *   devnet  → utxo-indexer.api-devnet.umbraprivacy.com
  *
  * The SDK is configured with UMBRA_INDEXER_URL = "/api/indexer-proxy", so
  * ReadServiceClient issues URLs like /api/indexer-proxy/v1/utxos?... — we
@@ -11,8 +15,12 @@
  */
 
 import type { NextRequest } from "next/server";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
-const UPSTREAM = "https://utxo-indexer.api-devnet.umbraprivacy.com";
+const UPSTREAM =
+  process.env.NEXT_PUBLIC_NETWORK === "mainnet"
+    ? "https://utxo-indexer.api.umbraprivacy.com"
+    : "https://utxo-indexer.api-devnet.umbraprivacy.com";
 
 const FORWARD_HEADERS = ["accept", "content-type", "x-response-layout"];
 
@@ -36,6 +44,13 @@ async function proxy(
   ctx: { params: Promise<{ path: string[] }> },
   method: "GET" | "POST"
 ): Promise<Response> {
+  // 120 indexer requests per IP per minute — generous for normal SDK usage, blocks scrapers
+  if (!checkRateLimit(`indexer:${getClientIp(req)}`, 120)) {
+    return new Response(JSON.stringify({ error: "Too many requests." }), {
+      status: 429,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   const { path } = await ctx.params;
   const upstreamUrl = buildUpstreamUrl(path, req);
 

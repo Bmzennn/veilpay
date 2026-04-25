@@ -1,19 +1,21 @@
-export type Token = "USDC" | "SOL";
+export type Token = "SOL" | "USDC" | "USDT" | "BONK" | "JUP" | "WIF";
 export type PaymentMode = "general" | "locked";
+export type TransferType = "link" | "confidential";
 
 export type LinkStep = "input" | "funding" | "registering" | "creating" | "done";
 export type ClaimStep = "scanning" | "preview" | "claiming" | "done";
+export type ConfidentialStep = "input" | "sending" | "done";
 
 export interface PaymentLinkMeta {
   id: string;
-  amount: string;       // human-readable, e.g. "50"
+  amount: string;
   token: Token;
   decimals: number;
-  amountRaw: string;    // bigint as string, e.g. "50000000"
-  createdAt: number;    // unix ms
-  expiresAt: number;    // unix ms
+  amountRaw: string;
+  createdAt: number;
+  expiresAt: number;
   claimed: boolean;
-  lockedTo?: string;    // recipient wallet address for wallet-locked links
+  lockedTo?: string;
 }
 
 export interface TxResult {

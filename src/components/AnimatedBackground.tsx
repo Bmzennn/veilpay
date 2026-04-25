@@ -5,8 +5,8 @@ import { motion } from "framer-motion";
 export function AnimatedBackground() {
   return (
     <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
-      {/* Light base */}
-      <div className="absolute inset-0 bg-[#f0f4f8]" />
+      {/* Base — light/dark */}
+      <div className="absolute inset-0 bg-[#f0f4f8] dark:bg-[#080e1a]" />
 
       {/* Top-right orb */}
       <motion.div

@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * Wallet context using @wallet-standard/app directly.
- * This avoids the @solana/wallet-adapter type mismatch with @solana/kit.
- * The Umbra SDK's createSignerFromWalletAccount expects native WalletAccount objects.
- */
-
 import {
   createContext,
   useContext,
@@ -17,6 +11,8 @@ import {
 import type { Wallet, WalletAccount } from "@wallet-standard/core";
 import {
   getCompatibleWallets,
+  subscribeWallets,
+  getPhantomFallback,
   connectWallet,
   disconnectWallet,
   shortAddress,
@@ -43,9 +39,38 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<WalletAccount | null>(null);
   const [connecting, setConnecting] = useState(false);
 
-  // Discover wallets on mount (client-only)
   useEffect(() => {
-    setWallets(getCompatibleWallets());
+    // Seed the wallet list. We do a few passes:
+    //  1. Immediately after mount (handles wallets already registered)
+    //  2. After 300ms (catches late-injecting extensions like Phantom)
+    //  3. Subscribe to future register/unregister events
+
+    const refresh = () => {
+      const ws = getCompatibleWallets();
+      // If Wallet Standard found nothing, try the legacy Phantom injection.
+      if (ws.length === 0) {
+        const fallback = getPhantomFallback();
+        setWallets(fallback ? [fallback] : []);
+      } else {
+        setWallets(ws);
+      }
+    };
+
+    // Immediate pass
+    refresh();
+
+    // Delayed pass — Phantom often injects 200-400ms after page load
+    const t1 = setTimeout(refresh, 300);
+    const t2 = setTimeout(refresh, 800);
+
+    // Subscribe to Wallet Standard events for future changes
+    const unsub = subscribeWallets(refresh, refresh);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      unsub();
+    };
   }, []);
 
   const connect = useCallback(async (w: Wallet) => {
@@ -56,6 +81,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         setWallet(w);
         setAccount(acc);
       }
+    } catch (e) {
+      console.error("[WalletContext] connect failed:", e);
     } finally {
       setConnecting(false);
     }

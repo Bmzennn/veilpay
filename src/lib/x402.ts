@@ -1,18 +1,27 @@
 import { Connection, PublicKey, Keypair } from "@solana/web3.js";
-import { getCreatePublicStealthPoolDepositInputBufferInstructionDataDecoder, getDepositIntoStealthPoolFromPublicBalanceInstructionDataDecoder, getEncryptedUserAccountDecoder } from "@umbra-privacy/umbra-codama";
-import { 
-    getAesDecryptor, 
-    getUmbraClient, 
-    createSignerFromPrivateKeyBytes, 
-    getUserAccountX25519KeypairDeriver 
+import { log, warn } from "./logger";
+import { getCreatePublicStealthPoolDepositInputBufferInstructionDataDecoder, getEncryptedUserAccountDecoder } from "@umbra-privacy/umbra-codama";
+import {
+    getAesDecryptor,
+    getUmbraClient,
+    createSignerFromPrivateKeyBytes,
+    getUserAccountX25519KeypairDeriver
 } from "@umbra-privacy/sdk";
 import { x25519 } from "@noble/curves/ed25519";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { sha256 } from "@noble/hashes/sha256";
 import bs58 from "bs58";
 import { getSupabaseServiceClient } from "./supabase";
+import { NETWORK } from "./constants";
 
-const UMBRA_PROGRAM_ID = new PublicKey("DSuKkyqGVGgo4QtPABfxKJKygUDACbUhirnuv63mEpAJ");
+const UMBRA_PROGRAM_IDS = {
+  mainnet: "UMBRAD2ishebJTcgCLkTkNUx1v3GyoAgpTRPeWoLykh",
+  devnet:  "DSuKkyqGVGgo4QtPABfxKJKygUDACbUhirnuv63mEpAJ",
+} as const;
+
+const UMBRA_PROGRAM_ID = new PublicKey(
+  UMBRA_PROGRAM_IDS[NETWORK as "mainnet" | "devnet"] ?? UMBRA_PROGRAM_IDS.devnet
+);
 
 export interface VerifyX402Params {
   connection: Connection;
@@ -76,7 +85,7 @@ export async function verifyX402Deposit(params: VerifyX402Params): Promise<boole
           const decoded = proofDecoder.decode(data);
           aesEncryptedData = decoded.aesEncryptedData.first;
           optionalData = decoded.optionalData.first;
-          console.log("[verifyX402Deposit] Found Umbra Proof Instruction");
+          log("[verifyX402Deposit] Found Umbra Proof Instruction");
           break;
         } catch (e) {
           // Not the proof instruction
@@ -96,7 +105,7 @@ export async function verifyX402Deposit(params: VerifyX402Params): Promise<boole
 
     // 4. Identify the Depositor (the first signer of the transaction)
     const depositorPubKey = proofTx.transaction.message.accountKeys[0].pubkey;
-    console.log("[verifyX402Deposit] Detected Depositor Signer:", depositorPubKey.toBase58());
+    log("[verifyX402Deposit] Detected Depositor Signer:", depositorPubKey.toBase58());
 
     // 5. Calculate and Fetch Depositor's Umbra Account PDA
     const seed = sha256(new TextEncoder().encode("EncryptedUserAccount"));
@@ -110,7 +119,7 @@ export async function verifyX402Deposit(params: VerifyX402Params): Promise<boole
 
     // The sender's token encryption public key is used for the ECDH exchange
     const depositorX25519PubKey = decodedAcc.x25519PublicKeyForTokenEncryption.first;
-    console.log("[verifyX402Deposit] Retrieved Depositor X25519 Pubkey from calculated PDA");
+    log("[verifyX402Deposit] Retrieved Depositor X25519 Pubkey from calculated PDA");
     // 6. Derive AES-256-GCM Shared Secret using Server's Derived Private Key + Depositor's Public Key
     const b58 = (bs58 as any).default || bs58;
     const serverPrivKey = b58.decode(serverPrivateKeyBase58);
@@ -120,10 +129,9 @@ export async function verifyX402Deposit(params: VerifyX402Params): Promise<boole
     const dummySigner = await createSignerFromPrivateKeyBytes(serverKeypair.secretKey);
     const client = await getUmbraClient({
         signer: dummySigner,
-        network: "devnet",
+        network: NETWORK as "mainnet" | "devnet",
         rpcUrl: connection.rpcEndpoint,
-        rpcSubscriptionsUrl: connection.rpcEndpoint.replace("http", "ws"),
-        indexerApiEndpoint: "https://utxo-indexer.api-devnet.umbraprivacy.com",
+        rpcSubscriptionsUrl: connection.rpcEndpoint.replace(/^http/, "ws"),
         deferMasterSeedSignature: true,
     });
 
@@ -136,13 +144,13 @@ export async function verifyX402Deposit(params: VerifyX402Params): Promise<boole
       depositorX25519PubKey as any
     );
     const aesKey = keccak_256(sharedSecret).slice(0, 32);
-    console.log("[verifyX402Deposit] Derived shared secret and AES key");
+    log("[verifyX402Deposit] Derived shared secret and AES key");
 
     // 7. Decrypt the payload
     // Note: Umbra SDK's getAesDecryptor expects [nonce(12)][ciphertext][tag(16)]
     const decryptor = getAesDecryptor();
     const plaintext = await decryptor(aesKey as any, aesEncryptedData);
-    console.log("[verifyX402Deposit] Decrypted proof payload");
+    log("[verifyX402Deposit] Decrypted proof payload");
 
     // 8. Verify the decrypted payload
     // Plaintext layout for CreateReceiverClaimableUtxoFromPublicBalance:
@@ -170,7 +178,7 @@ export async function verifyX402Deposit(params: VerifyX402Params): Promise<boole
       return false;
     }
 
-    console.log(`[verifyX402Deposit] ✅ Successfully verified payment of ${decryptedAmount} for ${destAddress}`);
+    log(`[verifyX402Deposit] ✅ Successfully verified payment of ${decryptedAmount} for ${destAddress}`);
     
     // Record successful payment to prevent replay
     if (supabase) {

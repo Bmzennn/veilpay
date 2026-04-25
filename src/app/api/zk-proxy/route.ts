@@ -22,15 +22,26 @@ export async function GET(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: "Missing url param" }, { status: 400 });
   }
 
-  if (!url.startsWith(ALLOWED_CDN_ORIGIN)) {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+  }
+
+  if (parsed.origin !== ALLOWED_CDN_ORIGIN) {
     return NextResponse.json({ error: "URL not in allowlist" }, { status: 403 });
   }
 
-  console.log(`[zkProxy] Fetching upstream: ${url.split('/').pop()}`);
+  // Only allow https; origin check above already ensures this, but be explicit
+  if (parsed.protocol !== "https:") {
+    return NextResponse.json({ error: "URL not in allowlist" }, { status: 403 });
+  }
+
+  console.log(`[zkProxy] Fetching upstream: ${parsed.pathname.split('/').pop()}`);
 
   try {
-    // Increase signal/timeout if possible, but Edge handles this better by default
-    const upstream = await fetch(url);
+    const upstream = await fetch(parsed.href);
 
     if (!upstream.ok) {
       console.error(`[zkProxy] Upstream error: ${upstream.status} ${upstream.statusText}`);

@@ -35,6 +35,7 @@ import {
   getUserAccountX25519KeypairDeriver,
   getMasterViewingKeyX25519KeypairDeriver,
   getPublicBalanceToReceiverClaimableUtxoCreatorFunction,
+  getPublicBalanceToEncryptedBalanceDirectDepositorFunction,
   getClaimableUtxoScannerFunction,
   getReceiverClaimableUtxoToEncryptedBalanceClaimerFunction,
   getEncryptedBalanceToPublicBalanceDirectWithdrawerFunction,
@@ -58,7 +59,7 @@ import type { Wallet, WalletAccount } from "@wallet-standard/core";
 import type { Address } from "@solana/kit";
 import bs58 from "bs58";
 
-import { Keypair, Connection } from "@solana/web3.js";
+import { Keypair, Connection, VersionedTransaction } from "@solana/web3.js";
 import {
   RPC_URL,
   RPC_WS_URL,
@@ -70,10 +71,10 @@ import {
 } from "./constants";
 import { fundEphemeral } from "./solana";
 import type { Token, PaymentLinkMeta } from "@/types";
+import { log, warn } from "./logger";
 
 // Derive U32 from the scanner function's parameter type (it is a branded bigint)
-type U32 = Parameters<ClaimableUtxoScannerFunction>[0];
-type U64 = { readonly [SubBrandSymbol]: "U64" }; declare const SubBrandSymbol: unique symbol;
+export type U32 = Parameters<ClaimableUtxoScannerFunction>[0];
 
 // ─── ZK asset provider ───────────────────────────────────────────────────────
 // The Umbra CDN omits CORS headers, so browser fetches are blocked.
@@ -90,10 +91,18 @@ type Manifest = { assets: Record<string, ManifestAsset> };
 
 /**
  * Enhanced ZK asset provider with persistent browser caching.
- * Uses the Cache Storage API to store massive .zkey files (>50MB) 
+ * Uses the Cache Storage API to store massive .zkey files (>50MB)
  * so they are never re-downloaded after the first successful load.
+ *
+ * Module-level singleton: the manifest and blob URL cache survive across
+ * multiple makeZkProverDeps() calls within a single page session, eliminating
+ * redundant manifest proxy fetches.
  */
+let _zkAssetProviderInstance: IZkAssetProvider | null = null;
+
 function getPersistentZkAssetProvider(): IZkAssetProvider {
+  if (_zkAssetProviderInstance) return _zkAssetProviderInstance;
+
   let manifestCache: Manifest | null = null;
 
   const fetchWithCache = async (url: string, attempt = 1): Promise<string> => {
@@ -107,14 +116,14 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
         // Double check it's not a tiny error response that got cached
         const contentLength = cachedResponse.headers.get("content-length");
         if (!contentLength || parseInt(contentLength) > 1000) {
-            console.log(`[zkCache] Persistent hit: ${url.split('/').pop()}`);
+            log(`[zkCache] Persistent hit: ${url.split('/').pop()}`);
             const blob = await cachedResponse.blob();
             return URL.createObjectURL(blob);
         }
         await cache.delete(url); // Clean up bad entry
       }
 
-      console.log(`[zkCache] Cache miss (attempt ${attempt}), downloading: ${url.split('/').pop()}`);
+      log(`[zkCache] Cache miss (attempt ${attempt}), downloading: ${url.split('/').pop()}`);
       const proxyUrl = `/api/zk-proxy?url=${encodeURIComponent(url)}`;
       const response = await fetch(proxyUrl);
       
@@ -130,10 +139,11 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
       
       const blob = await response.blob();
       return URL.createObjectURL(blob);
-    } catch (e: any) {
-      console.warn(`[zkCache] Download failed (attempt ${attempt}):`, e.message);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      warn(`[zkCache] Download failed (attempt ${attempt}):`, message);
       if (attempt < 3) {
-          console.log("[zkCache] Retrying in 2s...");
+          log("[zkCache] Retrying in 2s...");
           await new Promise(r => setTimeout(r, 2000));
           return fetchWithCache(url, attempt + 1);
       }
@@ -141,7 +151,7 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
     }
   };
 
-  return {
+  const provider: IZkAssetProvider = {
     async getAssetUrls(type: string, variant?: string): Promise<{ zkeyUrl: string; wasmUrl: string }> {
       if (!manifestCache) {
         const res = await fetch(
@@ -166,7 +176,6 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
       const fullZkeyUrl = rawUrl.startsWith("http") ? rawUrl : `${CDN_BASE}/${rawUrl}`;
       const fullWasmUrl = fullZkeyUrl.replace(/\.zkey$/i, ".wasm");
 
-      // Parallel fetch/cache for both files
       const [zkeyUrl, wasmUrl] = await Promise.all([
         fetchWithCache(fullZkeyUrl),
         fetchWithCache(fullWasmUrl)
@@ -175,6 +184,9 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
       return { zkeyUrl, wasmUrl };
     },
   };
+
+  _zkAssetProviderInstance = provider;
+  return provider;
 }
 
 /**
@@ -182,16 +194,16 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
  */
 export async function preloadCreateAssets() {
   if (typeof window === "undefined") return;
-  console.log("[zkCache] Proactive pre-load started for 'send' circuits...");
+  log("[zkCache] Proactive pre-load started for 'send' circuits...");
   try {
     const provider = getPersistentZkAssetProvider();
     await Promise.all([
-      provider.getAssetUrls("userregistration" as any),
-      provider.getAssetUrls("receiverclaimableutxofrompublicbalance" as any)
+      provider.getAssetUrls("userregistration"),
+      provider.getAssetUrls("receiverclaimableutxofrompublicbalance")
     ]);
-    console.log("[zkCache] Proactive pre-load complete.");
+    log("[zkCache] Proactive pre-load complete.");
   } catch (e) {
-    console.warn("[zkCache] Proactive pre-load failed:", e);
+    warn("[zkCache] Proactive pre-load failed:", e);
   }
 }
 
@@ -202,14 +214,14 @@ export async function preloadCreateAssets() {
  */
 export async function preloadClaimAssets() {
   if (typeof window === "undefined") return;
-  console.log("[zkCache] Proactive pre-load started for 'claim' circuits...");
+  log("[zkCache] Proactive pre-load started for 'claim' circuits...");
   try {
     const provider = getPersistentZkAssetProvider();
     // This triggers the fetch-and-cache logic inside the provider
-    await provider.getAssetUrls("claimreceiverclaimableutxointoencryptedbalance" as any);
-    console.log("[zkCache] Proactive pre-load complete.");
+    await provider.getAssetUrls("claimreceiverclaimableutxointoencryptedbalance");
+    log("[zkCache] Proactive pre-load complete.");
   } catch (e) {
-    console.warn("[zkCache] Proactive pre-load failed (will retry on-demand):", e);
+    warn("[zkCache] Proactive pre-load failed (will retry on-demand):", e);
   }
 }
 
@@ -221,7 +233,7 @@ export async function clearZkCache() {
     if (typeof window === "undefined") return;
     try {
         await caches.delete(ZK_CACHE_NAME);
-        console.log("[zkCache] Local storage wiped.");
+        log("[zkCache] Local storage wiped.");
     } catch (e) {
         console.error("[zkCache] Failed to clear:", e);
     }
@@ -232,20 +244,20 @@ export function makeZkProverDeps() {
     assetProvider: getPersistentZkAssetProvider(),
     callbacks: {
       onZkeyDownload: {
-        pre: async () => console.log("[zkProver] preparing zkey…"),
-        post: async () => console.log("[zkProver] zkey ready"),
+        pre: async () => log("[zkProver] preparing zkey…"),
+        post: async () => log("[zkProver] zkey ready"),
       },
       onWasmDownload: {
-        pre: async () => console.log("[zkProver] preparing wasm…"),
-        post: async () => console.log("[zkProver] wasm ready"),
+        pre: async () => log("[zkProver] preparing wasm…"),
+        post: async () => log("[zkProver] wasm ready"),
       },
       onWitnessGeneration: {
-        pre: async () => console.log("[zkProver] generating witness…"),
-        post: async () => console.log("[zkProver] witness done"),
+        pre: async () => log("[zkProver] generating witness…"),
+        post: async () => log("[zkProver] witness done"),
       },
       onProofComputation: {
-        pre: async () => console.log("[zkProver] computing ZK proof (may take 10-30s)…"),
-        post: async () => console.log("[zkProver] proof done"),
+        pre: async () => log("[zkProver] computing ZK proof (may take 10-30s)…"),
+        post: async () => log("[zkProver] proof done"),
       },
     },
   };
@@ -332,18 +344,48 @@ function makeSkipPreflightForwarder() {
 
     // Diagnostic: log wire stats before sending
     const sigCount = Object.keys(tx.signatures).length;
-    console.log(
+    log(
       "[sendAndConfirm] wire stats — sigSlots:", sigCount,
       "msgBytes:", tx.messageBytes.length,
       "wireTotal:", wire.length,
       "msgFirstByte:", tx.messageBytes[0]?.toString(16)
     );
 
+    // Run simulation (no sig-verify) to see if the tx is structurally valid
+    // and get program-level logs. This fires in parallel with the submit.
+    try {
+      const { VersionedTransaction } = await import("@solana/web3.js");
+      const vTx = VersionedTransaction.deserialize(wire);
+      const sim = await conn.simulateTransaction(vTx, {
+        sigVerify: false,
+        commitment: "processed",
+      });
+      if (sim.value.err) {
+        console.error(
+          "[sendAndConfirm] ⚠️ simulation FAILED — tx will likely be dropped:",
+          JSON.stringify(sim.value.err),
+          "\n  logs:", sim.value.logs?.join("\n  ") ?? "(none)"
+        );
+      } else {
+        log(
+          "[sendAndConfirm] ✅ simulation OK — units:", sim.value.unitsConsumed
+        );
+      }
+    } catch (simErr) {
+      warn(
+        "[sendAndConfirm] simulation threw (may be a format issue):",
+        simErr instanceof Error ? simErr.message : String(simErr)
+      );
+    }
+
     // Send once to get a signature, then rebroadcast every RESUBMIT_MS while polling.
     // Solana validators can drop transactions under load — resubmitting keeps it alive.
     async function trySend(): Promise<string> {
       try {
-        return await conn.sendRawTransaction(wire, { skipPreflight: true, maxRetries: 0 });
+        // No maxRetries override — let the RPC node retry propagation to the
+        // leader until the blockhash expires. maxRetries: 0 was silently killing
+        // transactions: the RPC sent once, the leader dropped it, nobody retried.
+        return await conn.sendRawTransaction(wire, { skipPreflight: true });
       } catch (e) {
         const raw = e instanceof Error ? e.message : String(e);
         // "already been processed" means a prior attempt confirmed — not an error.
@@ -357,15 +399,18 @@ function makeSkipPreflightForwarder() {
     const sig = await trySend();
     if (!sig) throw new Error("Transaction send failed: no signature returned");
 
-    console.log(
+    log(
       "[sendAndConfirm] ✅ submitted sig:", sig,
       `\n  Solscan:  https://solscan.io/tx/${sig}${clusterQuery}`,
       `\n  Explorer: https://explorer.solana.com/tx/${sig}${clusterQuery}`
     );
 
-    const MAX_WAIT_MS = 90_000;
+    // Solana blockhashes expire after ~150 slots (~60s). Giving up at 55s
+    // lets callers retry with a fresh SDK call (new tx, new blockhash)
+    // instead of endlessly resubmitting a tx whose blockhash already expired.
+    const MAX_WAIT_MS = 55_000;
     const POLL_MS = 2_000;
-    const RESUBMIT_MS = 15_000;
+    const RESUBMIT_MS = 10_000;
     const deadline = Date.now() + MAX_WAIT_MS;
     let lastResubmit = Date.now();
     let pollCount = 0;
@@ -376,7 +421,7 @@ function makeSkipPreflightForwarder() {
       pollCount++;
 
       if (status) {
-        console.log(
+        log(
           "[sendAndConfirm] poll", pollCount, "→ confirmationStatus:", status.confirmationStatus,
           status.err ? "| err: " + JSON.stringify(status.err) : ""
         );
@@ -389,17 +434,17 @@ function makeSkipPreflightForwarder() {
           status.confirmationStatus === "confirmed" ||
           status.confirmationStatus === "finalized"
         ) {
-          console.log("[sendAndConfirm] confirmed after", pollCount, "polls");
+          log("[sendAndConfirm] confirmed after", pollCount, "polls");
           return sig;
         }
       } else if (pollCount <= 5 || pollCount % 10 === 0) {
-        console.log("[sendAndConfirm] poll", pollCount, "→ null (not yet seen by cluster)");
+        log("[sendAndConfirm] poll", pollCount, "→ null (not yet seen by cluster)");
       }
 
       // Rebroadcast if the tx hasn't landed yet and enough time has passed.
       if (Date.now() - lastResubmit >= RESUBMIT_MS) {
         lastResubmit = Date.now();
-        console.log("[sendAndConfirm] resubmitting (poll", pollCount, ")");
+        log("[sendAndConfirm] resubmitting (poll", pollCount, ")");
         trySend().catch(() => { /* ignore resubmit errors — keep polling */ });
       }
       await new Promise((r) => setTimeout(r, POLL_MS));
@@ -408,7 +453,7 @@ function makeSkipPreflightForwarder() {
     // Final check with history search — catches the "confirmed but evicted from recent cache" case
     const historyCheck = await conn.getSignatureStatus(sig, { searchTransactionHistory: true });
     if (historyCheck.value && !historyCheck.value.err) {
-      console.log("[sendAndConfirm] found in history after timeout — treating as confirmed");
+      log("[sendAndConfirm] found in history after timeout — treating as confirmed");
       return sig;
     }
     if (historyCheck.value?.err) {
@@ -526,6 +571,12 @@ function appendSetComputeUnitPrice(msgBytes: Uint8Array, cuIdx: number, microLam
     offset += dlBr + dataLen;
   }
   const instrSectionEnd = offset;
+  log(
+    "[appendSetComputeUnitPrice] instrCount:", instrCount,
+    "instrSectionEnd:", instrSectionEnd,
+    "altSectionSize:", msgBytes.length - instrSectionEnd,
+    "altFirstByte:", msgBytes[instrSectionEnd]?.toString(16) ?? "eof"
+  );
 
   // Build SetComputeUnitPrice instruction: [cuIdx][0x00=0 accounts][0x09=9 bytes data][3][8-byte LE u64]
   const priceData = new Uint8Array(9);
@@ -563,8 +614,29 @@ function maybeInjectCUPrice(msgBytes: Uint8Array): Uint8Array {
   const cuIdx = findComputeBudgetIndex(msgBytes);
   if (cuIdx === null) return msgBytes; // no ComputeBudget program → skip
   if (hasSetComputeUnitPrice(msgBytes, cuIdx)) return msgBytes; // already has price → skip
-  console.log("[createBrowserSigner] injecting SetComputeUnitPrice(1) to prevent Phantom prepend");
-  return appendSetComputeUnitPrice(msgBytes, cuIdx, 1n);
+
+  const injected = appendSetComputeUnitPrice(msgBytes, cuIdx, 10_000n);
+
+  // Validate the injection by deserializing it as a VersionedTransaction.
+  // If our byte-level injection corrupted the message structure (e.g. wrong ALT
+  // section boundary), deserialization will throw and we fall back to the original
+  // bytes — letting Phantom inject its own CU price instead.
+  try {
+    const fakeWire = new Uint8Array(1 + 64 + injected.length);
+    fakeWire[0] = 1; // 1 signature slot
+    // 64 zero bytes (invalid sig, but we only want to check structure)
+    fakeWire.set(injected, 65);
+    VersionedTransaction.deserialize(fakeWire);
+    log("[createBrowserSigner] injection valid ✓ — injecting SetComputeUnitPrice(10000)");
+    return injected;
+  } catch (e) {
+    warn(
+      "[createBrowserSigner] injection produced invalid message — falling back to original bytes " +
+      "(Phantom will inject its own CU price):",
+      e instanceof Error ? e.message : String(e)
+    );
+    return msgBytes;
+  }
 }
 
 async function verifyEd25519(
@@ -734,7 +806,7 @@ export function createBrowserSigner(
         phantomMsgBytes.every((b, i) => b === msgToSign[i]);
 
       if (!msgMatches) {
-        console.log(
+        log(
           "[createBrowserSigner] Phantom injected CU price (+",
           phantomMsgBytes.length - msgToSign.length, "bytes)"
         );
@@ -752,7 +824,7 @@ export function createBrowserSigner(
       if (walletSig) {
         const pubKeyBytes = bs58.decode(account.address);
         const valid = await verifyEd25519(pubKeyBytes, walletSig, effectiveMessageBytes);
-        console.log("[createBrowserSigner] wallet sig verifies:", valid,
+        log("[createBrowserSigner] wallet sig verifies:", valid,
           "| hasSeed:", hasSeed, "| msgChanged:", !msgMatches);
         if (!valid) {
           throw new Error(
@@ -780,7 +852,7 @@ export function createBrowserSigner(
           const seed = commitmentKeyMap.get(addr)!;
           const reSig = nobleEd25519.sign(effectiveMessageBytes, seed);
           newSigs[addr] = reSig;
-          console.log("[createBrowserSigner] re-signed commitment slot:", addr.slice(0, 8));
+          log("[createBrowserSigner] re-signed commitment slot:", addr.slice(0, 8));
         } else {
           // Fallback: use Phantom's sig if present, else preserve the pre-existing sig.
           const fromWallet = idx < sigsFromWallet.length ? sigsFromWallet[idx] : null;
@@ -791,7 +863,7 @@ export function createBrowserSigner(
         }
       }
 
-      console.log(
+      log(
         "[createBrowserSigner] slots:", signerAddresses.length,
         "| walletSlot:", signerAddresses.indexOf(account.address as string),
         "| msgChanged:", !msgMatches,
@@ -850,12 +922,10 @@ export async function makeClient(
     ? makeSkipPreflightForwarder()
     : getPollingTransactionForwarder({ rpcUrl: RPC_URL });
 
-  // Use polling computation monitor for the skip-preflight (sender) client.
-  // Public devnet WebSocket endpoints drop connections unpredictably, which
-  // would cause the registration/deposit callback to hang indefinitely.
-  const computationMonitor = opts?.skipPreflight
-    ? getPollingComputationMonitor({ rpcUrl: RPC_URL })
-    : undefined; // default (WebSocket) is fine for ephemeral keypair clients
+  // Always use polling computation monitor — devnet WebSocket endpoints drop
+  // unpredictably, which caused the ephemeral registration tx to hang at
+  // "Registering privacy channel…" even after confirming on-chain.
+  const computationMonitor = getPollingComputationMonitor({ rpcUrl: RPC_URL });
 
   return getUmbraClient(
     {
@@ -866,7 +936,7 @@ export async function makeClient(
       indexerApiEndpoint: UMBRA_INDEXER_URL,
       deferMasterSeedSignature: true,
     },
-    { transactionForwarder, ...(computationMonitor ? { computationMonitor } : {}) }
+    { transactionForwarder, computationMonitor }
   );
 }
 
@@ -875,7 +945,7 @@ export async function makeClient(
 export async function registerAccount(
   signer: Awaited<ReturnType<typeof createSignerFromPrivateKeyBytes>>
 ): Promise<void> {
-  console.log("[registerAccount] start", signer.address.slice(0, 8));
+  log("[registerAccount] start", signer.address.slice(0, 8));
   let client: Awaited<ReturnType<typeof makeClient>>;
   try {
     client = await makeClient(signer);
@@ -886,15 +956,15 @@ export async function registerAccount(
   // Check if already fully registered — registration is idempotent but skipping
   // the prover avoids a heavy CDN fetch on repeat calls.
   try {
-    console.log("[registerAccount] querying existing account…");
+    log("[registerAccount] querying existing account…");
     const querier = getUserAccountQuerierFunction({ client });
     const existing = await querier(signer.address as Address);
-    console.log("[registerAccount] account state:", existing.state);
+    log("[registerAccount] account state:", existing.state);
     if (existing.state === "exists") {
       const { isUserCommitmentRegistered, isUserAccountX25519KeyRegistered } =
         existing.data;
       if (isUserCommitmentRegistered && isUserAccountX25519KeyRegistered) {
-        console.log("[registerAccount] already fully registered, skipping");
+        log("[registerAccount] already fully registered, skipping");
         return;
       }
     }
@@ -903,15 +973,15 @@ export async function registerAccount(
   }
 
   try {
-    console.log("[registerAccount] building prover…");
+    log("[registerAccount] building prover…");
     const registrationProver = getUserRegistrationProver(makeZkProverDeps());
     const register = getUserRegistrationFunction(
       { client },
       { zkProver: registrationProver }
     );
-    console.log("[registerAccount] calling register()…");
+    log("[registerAccount] calling register()…");
     await register({ confidential: true, anonymous: true });
-    console.log("[registerAccount] done");
+    log("[registerAccount] done");
   } catch (e) {
     throw new Error(`[3c register-tx] ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -942,6 +1012,8 @@ export interface CreateLinkArgs {
   onStatusChange: (msg: string) => void;
   /** If set, the claim page will only allow this wallet address to claim. */
   recipientAddress?: string;
+  /** Optional message visible to the recipient when they open the claim page. Encoded in the URL hash — never touches the server. */
+  memo?: string;
 }
 
 export interface CreateLinkResult {
@@ -956,6 +1028,7 @@ export async function createPaymentLink({
   token,
   onStatusChange,
   recipientAddress,
+  memo,
 }: CreateLinkArgs): Promise<CreateLinkResult> {
   const validationError = validateAmount(amountHuman, token);
   if (validationError) throw new Error(validationError);
@@ -976,7 +1049,7 @@ export async function createPaymentLink({
     } catch (e) {
       throw new Error(`[step 1 keygen] ${e instanceof Error ? e.message : String(e)}`);
     }
-    console.log("[createPaymentLink] ephemeral address:", ephemeralSigner.address.toString());
+    log("[createPaymentLink] ephemeral address:", ephemeralSigner.address.toString());
 
     // 2. Fund ephemeral with SOL for registration fees
     onStatusChange("Funding privacy channel…");
@@ -1046,9 +1119,9 @@ export async function createPaymentLink({
 
       if (needsRegistration) {
         onStatusChange("Registering sender privacy account (first time only)…");
-        console.log("[createPaymentLink] step 4a: needs registration, building prover…");
+        log("[createPaymentLink] step 4a: needs registration, building prover…");
         const senderRegProver = getUserRegistrationProver(makeZkProverDeps());
-        console.log("[createPaymentLink] step 4a: prover built, calling senderRegister…");
+        log("[createPaymentLink] step 4a: prover built, calling senderRegister…");
         // Capture the commitment-key Ed25519 seed so the browser signer can
         // re-sign the commitment slot against Phantom's post-injection message.
         // The senderSigner above shares this same seedRef (see createBrowserSigner
@@ -1085,7 +1158,7 @@ export async function createPaymentLink({
     );
 
     try {
-      console.log("[createPaymentLink] step 4b createUtxo calling…", {
+      log("[createPaymentLink] step 4b createUtxo calling…", {
         destination: ephemeralSigner.address.toString(),
         mint: tokenCfg.mint,
         amount: amountRaw.toString(),
@@ -1096,7 +1169,7 @@ export async function createPaymentLink({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         amount: amountRaw as any,
       });
-      console.log("[createPaymentLink] step 4b createUtxo OK — UTXO should now be in indexer");
+      log("[createPaymentLink] step 4b createUtxo OK — UTXO should now be in indexer");
       try {
         await debugLogRecentUtxos(ephemeralSigner.address.toString(), 5);
       } catch {}
@@ -1118,10 +1191,11 @@ export async function createPaymentLink({
     const lockParam = recipientAddress
       ? `&to=${encodeURIComponent(recipientAddress)}`
       : "";
+    const memoSuffix = memo?.trim() ? `:${encodeURIComponent(memo.trim())}` : "";
     const url =
       `${window.location.origin}/claim` +
       `?lid=${linkId}&exp=${expiresAt}${lockParam}` +
-      `#${claimSecret}:${token}`;
+      `#${claimSecret}:${token}${memoSuffix}`;
 
     const meta: PaymentLinkMeta = {
       id: linkId,
@@ -1152,7 +1226,7 @@ export async function createPaymentLink({
       });
       signature = Buffer.from(results[0].signature).toString("base64");
     } catch (e) {
-      console.warn("Failed to sign metadata authorization message", e);
+      warn("Failed to sign metadata authorization message", e);
     }
 
     if (signature) {
@@ -1191,23 +1265,30 @@ export interface ScanResult {
 }
 
 /**
- * Parse the claim secret and token from the URL hash.
- * Hash format: #<bs58_key>:<TOKEN>
+ * Parse the claim secret, token, and optional memo from the URL hash.
+ * Hash format: #<bs58_key>:<TOKEN>[:<urlencoded_memo>]
  */
 export function parseClaimHash(hash: string): {
   claimSecret: string;
   token: Token;
+  memo?: string;
 } {
   const stripped = hash.startsWith("#") ? hash.slice(1) : hash;
-  const colonIdx = stripped.indexOf(":");
-  if (colonIdx === -1) return { claimSecret: stripped, token: "USDC" };
-  const claimSecret = stripped.slice(0, colonIdx);
-  const tokenStr = stripped.slice(colonIdx + 1);
+  const firstColon = stripped.indexOf(":");
+  if (firstColon === -1) return { claimSecret: stripped, token: "USDC" };
+  const claimSecret = stripped.slice(0, firstColon);
+  const rest = stripped.slice(firstColon + 1);
+  const secondColon = rest.indexOf(":");
+  const tokenStr = secondColon === -1 ? rest : rest.slice(0, secondColon);
   const token: Token = tokenStr === "SOL" || tokenStr === "USDC" ? tokenStr : "USDC";
-  return { claimSecret, token };
+  let memo: string | undefined;
+  if (secondColon !== -1) {
+    try { memo = decodeURIComponent(rest.slice(secondColon + 1)); } catch { /* ignore malformed */ }
+  }
+  return { claimSecret, token, memo };
 }
 
-const MAX_LEAVES_PER_TREE = 1n << 20n; // 2^20, matches SDK constant
+export const MAX_LEAVES_PER_TREE = 1n << 20n; // 2^20, matches SDK constant
 
 /**
  * Determine which tree(s) contain recent deposits.  The indexer's stats
@@ -1215,10 +1296,10 @@ const MAX_LEAVES_PER_TREE = 1n << 20n; // 2^20, matches SDK constant
  * and also scan the previous tree as a safety margin in case we crossed
  * a boundary between deposit and scan.
  */
-async function getRecentTreeIndices(): Promise<bigint[]> {
+export async function getRecentTreeIndices(): Promise<bigint[]> {
   const readClient = new ReadServiceClient({ endpoint: UMBRA_INDEXER_URL });
   const stats = await readClient.getStats();
-  console.log(
+  log(
     "[indexer-stats] total_utxos=" + stats.total_utxos.toString() +
     " latest_absolute_index=" + String(stats.latest_absolute_index)
   );
@@ -1237,24 +1318,110 @@ async function debugLogRecentUtxos(ephemeralAddress: string, count = 10): Promis
     const stats = await readClient.getStats();
     const latest = stats.latest_absolute_index;
     if (latest === null) {
-      console.log("[indexer-debug] indexer is empty");
+      log("[indexer-debug] indexer is empty");
       return;
     }
     const start = latest >= BigInt(count) ? latest - BigInt(count) + 1n : 0n;
     const res = await readClient.getUtxoData({ start, end: latest, limit: BigInt(count) });
-    console.log(
+    log(
       `[indexer-debug] last ${res.items.length} UTXOs ` +
       `(for ephemeral ${ephemeralAddress.slice(0, 8)}…):`
     );
     for (const u of res.items) {
-      console.log(
+      log(
         `  abs=${u.absolute_index} tree=${u.tree_index} ins=${u.insertion_index}` +
         ` slot=${u.slot} depositor_x25519=${u.depositor_x25519_public_key.slice(0, 16)}…`
       );
     }
   } catch (e) {
-    console.warn("[indexer-debug] dump failed:", e);
+    warn("[indexer-debug] dump failed:", e);
   }
+}
+
+// ─── Confidential Transfer ────────────────────────────────────────────────────
+// Sends from the caller's public token balance directly into the recipient's
+// Umbra encrypted balance.  The amount is hidden on-chain; only sender↔recipient
+// relationship is visible (unlike private links which are fully anonymous).
+
+export interface ConfidentialTransferArgs {
+  senderWallet: Wallet;
+  senderAccount: WalletAccount;
+  recipientAddress: string;
+  amountHuman: string;
+  token: Token;
+  onStatusChange: (msg: string) => void;
+}
+
+export interface ConfidentialTransferResult {
+  signature: string;
+}
+
+export async function confidentialTransfer({
+  senderWallet,
+  senderAccount,
+  recipientAddress,
+  amountHuman,
+  token,
+  onStatusChange,
+}: ConfidentialTransferArgs): Promise<ConfidentialTransferResult> {
+  const validationError = validateAmount(amountHuman, token);
+  if (validationError) throw new Error(validationError);
+
+  const tokenCfg = TOKEN_CONFIG[token];
+  const amountRaw = BigInt(Math.round(parseFloat(amountHuman) * 10 ** tokenCfg.decimals));
+
+  const senderCommitmentKeys: CommitmentKeyMap = new Map();
+  const senderSigner = createBrowserSigner(senderWallet, senderAccount, senderCommitmentKeys);
+
+  onStatusChange("Connecting to Umbra…");
+  let senderClient: Awaited<ReturnType<typeof makeClient>>;
+  try {
+    senderClient = await makeClient(
+      senderSigner as Parameters<typeof makeClient>[0],
+      { skipPreflight: true }
+    );
+  } catch (e) {
+    throw new Error(`[setup] ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Recipient must have a registered Umbra account for their encrypted balance PDAs to exist.
+  onStatusChange("Verifying recipient account…");
+  try {
+    const recQuerier = getUserAccountQuerierFunction({ client: senderClient });
+    const recState = await recQuerier(recipientAddress as Address);
+    if (
+      recState.state !== "exists" ||
+      !recState.data.isUserAccountX25519KeyRegistered
+    ) {
+      throw new Error(
+        "Recipient has no VeilPay account. They must connect to VeilPay at least once before receiving confidential transfers."
+      );
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("VeilPay")) throw new Error(msg);
+    throw new Error(`Could not verify recipient: ${msg}`);
+  }
+
+  onStatusChange("Encrypting and sending to recipient…");
+  try {
+    const deposit = getPublicBalanceToEncryptedBalanceDirectDepositorFunction({
+      client: senderClient,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sig = await deposit(recipientAddress as Address, tokenCfg.mint as Address, amountRaw as any);
+    return { signature: typeof sig === "string" ? sig : String(sig) };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Transfer failed: ${msg}`);
+  }
+}
+
+/** Format a raw token amount to a human-readable string with no trailing zeros. */
+function formatHumanAmount(rawAmount: bigint, decimals: number): string {
+  const human = Number(rawAmount) / 10 ** decimals;
+  if (decimals === 6) return human.toFixed(2); // USD-pegged: always 2 decimal places
+  return parseFloat(human.toFixed(decimals)).toString(); // strip trailing zeros
 }
 
 /** Scan the Umbra pool for UTXOs waiting to be claimed with this secret. */
@@ -1273,7 +1440,7 @@ export async function scanForUtxo(
     const scanner = getClaimableUtxoScannerFunction({ client });
 
     const treeIndices = await getRecentTreeIndices();
-    console.log("[scanForUtxo] scanning trees:", treeIndices.map(String));
+    log("[scanForUtxo] scanning trees:", treeIndices.map(String));
     await debugLogRecentUtxos(ephemeralSigner.address.toString());
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -1292,7 +1459,7 @@ export async function scanForUtxo(
             break;
           }
         }
-        console.log(
+        log(
           `[scanForUtxo] attempt ${attempt}/${maxAttempts}` +
           ` → publicReceived=${totals.pubRec}` +
           ` selfBurnable=${totals.selfBurn}` +
@@ -1300,7 +1467,7 @@ export async function scanForUtxo(
           ` publicSelfBurnable=${totals.pubSelfBurn}`
         );
       } catch (scanErr) {
-        console.warn(`[scanForUtxo] attempt ${attempt} scanner error:`, scanErr);
+        warn(`[scanForUtxo] attempt ${attempt} scanner error:`, scanErr);
         if (attempt === maxAttempts) throw scanErr;
         await new Promise((r) => setTimeout(r, retryDelayMs));
         continue;
@@ -1309,14 +1476,12 @@ export async function scanForUtxo(
       if (foundUtxo) {
         const decimals = TOKEN_CONFIG[token].decimals;
         const amountRaw = BigInt(foundUtxo.amount.toString());
-        const amountHuman = (Number(amountRaw) / 10 ** decimals).toFixed(
-          decimals === 6 ? 2 : 4
-        );
+        const amountHuman = formatHumanAmount(amountRaw, decimals);
         return { hasUtxo: true, amountHuman, token, amountRaw };
       }
 
       if (attempt < maxAttempts) {
-        console.log(`[scanForUtxo] nothing yet, retrying in ${retryDelayMs}ms…`);
+        log(`[scanForUtxo] nothing yet, retrying in ${retryDelayMs}ms…`);
         await new Promise((r) => setTimeout(r, retryDelayMs));
       }
     }
@@ -1453,8 +1618,21 @@ export async function claimPaymentLink({
       // Since the UTXO is gone, we don't have the pre-fee original amount easily available.
       // For resumes, we will just use the current encrypted balance as the original amount
       // to ensure the full remainder gets swept to the recipient.
-      originalAmountRaw = BigInt((existingBalanceResult as any)!.balance.toString());
+      if (existingBalanceResult?.state === "shared") {
+        originalAmountRaw = BigInt(existingBalanceResult.balance.toString());
+      }
     }
+
+    // Ensure the ephemeral signer's SPL token ATA exists.
+    // The Umbra withdrawal instruction requires userSplAta (the destination wSOL
+    // ATA derived from the ephemeral signer's address) to be pre-initialized.
+    // If it doesn't exist the validator drops the transaction silently (AccountNotFound).
+    onStatusChange("Preparing token account…");
+    const claimConnection = new Connection(RPC_URL, "confirmed");
+    const claimEphemeralKeypair = Keypair.fromSeed(
+      ephemeralPrivateKey.length === 32 ? ephemeralPrivateKey : ephemeralPrivateKey.slice(0, 32)
+    );
+    await ensureEphemeralAta(claimConnection, claimEphemeralKeypair, tokenCfg.mint);
 
     // Withdraw from ephemeral encrypted balance → recipient public ATA
     onStatusChange("Sending to your wallet…");
@@ -1472,7 +1650,7 @@ export async function claimPaymentLink({
         }
 
         const availableBalance = BigInt(balanceResult.balance.toString());
-        console.log(`[withdraw] Attempt ${attempt}: Available balance is ${availableBalance}`);
+        log(`[withdraw] Attempt ${attempt}: Available balance is ${availableBalance}`);
         if (availableBalance === 0n) {
           throw new Error("Encrypted balance is 0. Waiting for RPC to sync the claim...");
         }
@@ -1483,13 +1661,14 @@ export async function claimPaymentLink({
         withdrawResult = await withdraw(
           ephemeralSigner.address as Address,
           mintAddress,
-          availableBalance as any
+          availableBalance as unknown as Parameters<typeof withdraw>[2]
         );
         break; // Success
       } catch (e) {
-        console.warn(`Withdrawal attempt ${attempt} failed, retrying in 8s...`, e);
+        warn(`Withdrawal attempt ${attempt} failed:`, e);
         if (attempt === 5) throw e;
-        await new Promise(r => setTimeout(r, 8000));
+        // Brief pause so the RPC gets a new slot (and thus a fresh blockhash)
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
     
@@ -1571,9 +1750,7 @@ export async function auditLinkStatus(
       const utxo = publicReceived[0];
       const decimals = TOKEN_CONFIG[token].decimals;
       const amountRaw = BigInt(utxo.amount.toString());
-      const amountHuman = (Number(amountRaw) / 10 ** decimals).toFixed(
-        decimals === 6 ? 2 : 4
-      );
+      const amountHuman = formatHumanAmount(amountRaw, decimals);
       return {
         status: "pending",
         amountHuman,
@@ -1594,9 +1771,7 @@ export async function auditLinkStatus(
     ) {
       const decimals = TOKEN_CONFIG[token].decimals;
       const amountRaw = BigInt(balanceResult.balance.toString());
-      const amountHuman = (Number(amountRaw) / 10 ** decimals).toFixed(
-        decimals === 6 ? 2 : 4
-      );
+      const amountHuman = formatHumanAmount(amountRaw, decimals);
       return {
         status: "in_transit",
         amountHuman,
@@ -1616,7 +1791,7 @@ export async function auditLinkStatus(
   }
 }
 
-// ─── Sweep Ephemeral ─────────────────────────────────────────────────────────
+// ─── ATA Helpers ─────────────────────────────────────────────────────────────
 
 import {
   getAssociatedTokenAddressSync,
@@ -1626,7 +1801,92 @@ import {
 } from "@solana/spl-token";
 import { SystemProgram, Transaction, sendAndConfirmTransaction, PublicKey } from "@solana/web3.js";
 
-const OVERAGE_WALLET = new PublicKey(process.env.NEXT_PUBLIC_OVERAGE_WALLET ?? "8FQFxAZt7U3WeCZfgbcpbujYASLUQqC7rcXGQ3gSGhY1");
+/**
+ * The Umbra withdrawal instruction requires `userSplAta` (the destination
+ * wSOL / SPL ATA) to already exist.  If the owner has never held wSOL the ATA
+ * is missing → simulation fails with AccountNotFound → validators silently drop
+ * the transaction before execution.  Call this once before any withdrawal.
+ *
+ * Uses the wallet's solana:signTransaction feature so this doesn't require an
+ * extra Phantom approve prompt — it goes through the same path as other txs.
+ */
+export async function ensureAssociatedTokenAccount(
+  wallet: Wallet,
+  account: WalletAccount,
+  mint: string,
+): Promise<void> {
+  const connection = new Connection(RPC_URL, "confirmed");
+  const mintPubkey = new PublicKey(mint);
+  const ownerPubkey = new PublicKey(account.address);
+  const ata = getAssociatedTokenAddressSync(mintPubkey, ownerPubkey, true);
+
+  const ataInfo = await connection.getAccountInfo(ata, "confirmed");
+  if (ataInfo) {
+    log("[ensureATA] already exists:", ata.toString());
+    return;
+  }
+
+  log("[ensureATA] creating token account:", ata.toString(), "mint:", mint.slice(0, 8));
+
+  const tx = new Transaction();
+  tx.add(
+    createAssociatedTokenAccountIdempotentInstruction(
+      ownerPubkey, ata, ownerPubkey, mintPubkey
+    )
+  );
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = ownerPubkey;
+
+  const signFeature = (wallet.features as Record<string, unknown>)[
+    "solana:signTransaction"
+  ] as SolanaSignTxFeature | undefined;
+  if (!signFeature?.signTransaction) throw new Error("Wallet does not support signTransaction");
+
+  const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+  const [output] = await signFeature.signTransaction({ account, transaction: serialized });
+
+  const sig = await connection.sendRawTransaction(output.signedTransaction, { skipPreflight: true });
+  log("[ensureATA] submitted:", sig);
+  await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+  log("[ensureATA] confirmed — ATA ready");
+}
+
+/** Create the ATA for an ephemeral keypair. Used in the claim flow. */
+async function ensureEphemeralAta(
+  connection: Connection,
+  ephemeralKeypair: Keypair,
+  mint: string,
+): Promise<void> {
+  const mintPubkey = new PublicKey(mint);
+  const ownerPubkey = ephemeralKeypair.publicKey;
+  const ata = getAssociatedTokenAddressSync(mintPubkey, ownerPubkey, true);
+
+  const ataInfo = await connection.getAccountInfo(ata, "confirmed");
+  if (ataInfo) {
+    log("[ensureEphemeralAta] already exists:", ata.toString());
+    return;
+  }
+
+  log("[ensureEphemeralAta] creating ATA:", ata.toString());
+  const tx = new Transaction();
+  tx.add(createAssociatedTokenAccountIdempotentInstruction(
+    ownerPubkey, ata, ownerPubkey, mintPubkey
+  ));
+  await sendAndConfirmTransaction(connection, tx, [ephemeralKeypair], { skipPreflight: true });
+  log("[ensureEphemeralAta] created");
+}
+
+// ─── Sweep Ephemeral ─────────────────────────────────────────────────────────
+
+const _overageAddr = process.env.NEXT_PUBLIC_OVERAGE_WALLET;
+if (!_overageAddr) {
+  throw new Error(
+    "NEXT_PUBLIC_OVERAGE_WALLET is not set. Configure this in your environment before deploying — " +
+    "without it, sweep overages have nowhere to go and funds will be lost."
+  );
+}
+const OVERAGE_WALLET = new PublicKey(_overageAddr);
 
 async function sweepEphemeral(
   ephemeralPrivateKey: Uint8Array,
@@ -1650,7 +1910,7 @@ async function sweepEphemeral(
   // Record initial SOL balance before we wait, to detect when funds arrive
   const initialSolBalance = await connection.getBalance(ephemeralPubkey, "confirmed");
 
-  console.log(`[sweep] Initial SOL balance: ${initialSolBalance}`);
+  log(`[sweep] Initial SOL balance: ${initialSolBalance}`);
 
   if (token !== "SOL") {
     const mintPubkey = new PublicKey(TOKEN_CONFIG[token].mint);
@@ -1663,10 +1923,10 @@ async function sweepEphemeral(
         const balanceInfo = await connection.getTokenAccountBalance(ephemeralAta, "confirmed");
         tokenBalance = BigInt(balanceInfo.value.amount);
         if (tokenBalance > 0n) {
-          console.log(`[sweep] Found ${tokenBalance} tokens in ATA after ${i * 3}s`);
+          log(`[sweep] Found ${tokenBalance} tokens in ATA after ${i * 3}s`);
           break;
         }
-      } catch (e) {
+      } catch {
         // ATA might not exist or balance is 0
       }
       await new Promise(r => setTimeout(r, 3000));
@@ -1701,7 +1961,7 @@ async function sweepEphemeral(
     solBalance = await connection.getBalance(ephemeralPubkey, "confirmed");
     // If it's a SOL link, wait for balance to significantly increase vs initial
     if (token === "SOL" && solBalance > initialSolBalance + 1000000) {
-      console.log(`[sweep] Found incoming SOL after ${i * 3}s (balance: ${solBalance})`);
+      log(`[sweep] Found incoming SOL after ${i * 3}s (balance: ${solBalance})`);
       break;
     }
     // If it's a token link, we just sweep the rent, but we already waited for the token ATA above
@@ -1775,7 +2035,7 @@ async function sweepEphemeral(
       await sendAndConfirmTransaction(connection, tx, [ephemeralKeypair], { skipPreflight: false });
     }
   } catch (e) {
-    console.warn("Failed to sweep remaining ephemeral SOL:", e);
+    warn("Failed to sweep remaining ephemeral SOL:", e);
     if (token === "SOL") {
       throw new Error(`Failed to sweep SOL to your wallet: ${e instanceof Error ? e.message : String(e)}`);
     }

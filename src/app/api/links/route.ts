@@ -18,10 +18,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { ed25519 } from "@noble/curves/ed25519";
 import { PublicKey } from "@solana/web3.js";
 import { getSupabaseServiceClient, getSupabaseClient } from "@/lib/supabase";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
 // ─── POST — create link ───────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  // 20 link creations per IP per minute — prevents DB spam
+  if (!checkRateLimit(`links-POST:${getClientIp(req)}`, 20)) {
+    return NextResponse.json({ error: "Too many requests." }, { status: 429 });
+  }
+
   const client = getSupabaseServiceClient();
   if (!client) {
     return NextResponse.json({ ok: true, persisted: false });

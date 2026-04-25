@@ -1,4 +1,5 @@
 import { Connection, Keypair } from "@solana/web3.js";
+import { log, warn } from "./logger";
 import { makeZkProverDeps, createBrowserSigner } from "./umbra";
 import { 
   getUmbraClient, 
@@ -23,7 +24,7 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
   const { agentPrivateKeyBase58, ...fetchOptions } = options;
 
   // 1. Initial Request
-  console.log(`[x402Client] Fetching ${url}...`);
+  log(`[x402Client] Fetching ${url}...`);
   let response = await fetch(url, fetchOptions);
 
   // 2. If not 402 Payment Required, return immediately
@@ -31,7 +32,7 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
     return response;
   }
 
-  console.log(`[x402Client] 402 Payment Required intercepted. Extracting invoice...`);
+  log(`[x402Client] 402 Payment Required intercepted. Extracting invoice...`);
 
   // 3. Parse Invoice
   const authHeader = response.headers.get("Www-Authenticate");
@@ -46,7 +47,7 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
     throw new Error("Invalid x402 invoice payload from server.");
   }
 
-  console.log(`[x402Client] Invoice received: ${invoice.amount} ${invoice.token} to ${invoice.destination}`);
+  log(`[x402Client] Invoice received: ${invoice.amount} ${invoice.token} to ${invoice.destination}`);
 
   // 4. Prepare Solana/Umbra Client
   const agentKeypair = Keypair.fromSecretKey(bs58.decode(agentPrivateKeyBase58));
@@ -68,7 +69,7 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
   const invoiceIdBytes = new Uint8Array(Buffer.from(invoice.invoiceId, "hex"));
 
   // 5. Execute Stealth Deposit (Two steps: Proof + Deposit)
-  console.log(`[x402Client] Generating ZK Proof for Stealth Deposit... (This takes ~20s)`);
+  log(`[x402Client] Generating ZK Proof for Stealth Deposit... (This takes ~20s)`);
   
   const utxoProver = getCreateReceiverClaimableUtxoFromPublicBalanceProver(makeZkProverDeps());
   const createUtxo = getPublicBalanceToReceiverClaimableUtxoCreatorFunction(
@@ -87,12 +88,12 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
   const depositTxSig = result.createUtxoSignature;
   const proofTxSig = result.createProofAccountSignature;
 
-  console.log(`[x402Client] Deposit successful!`);
-  console.log(`  Proof TX: ${proofTxSig}`);
-  console.log(`  Deposit TX: ${depositTxSig}`);
+  log(`[x402Client] Deposit successful!`);
+  log(`  Proof TX: ${proofTxSig}`);
+  log(`  Deposit TX: ${depositTxSig}`);
 
   // 6. Retry Request with Proof of Payment
-  console.log(`[x402Client] Retrying request with Proof of Payment...`);
+  log(`[x402Client] Retrying request with Proof of Payment...`);
   
   const retryHeaders = new Headers(fetchOptions.headers);
   retryHeaders.set("Authorization", `x402 ${proofTxSig}:${depositTxSig}:${invoice.invoiceId}`);
@@ -102,6 +103,6 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
     headers: retryHeaders,
   });
 
-  console.log(`[x402Client] Server responded with status ${response.status}`);
+  log(`[x402Client] Server responded with status ${response.status}`);
   return response;
 }
