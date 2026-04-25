@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { BackgroundStage } from "@/components/BackgroundStage";
 import { ConnectWalletButton } from "@/components/WalletModal";
-import { Sun, Moon } from "lucide-react";
+import { Sun, Moon, Menu, X } from "lucide-react";
 
 // ─── Logo ────────────────────────────────────────────────────────────────────
 
@@ -17,7 +17,7 @@ export function VPLogo({ size = 52 }: { size?: number }) {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/logo-nobg.png" alt="VeilPay" />
       </span>
-      <span>VeilPay</span>
+      <span className="nav-logo-text">VeilPay</span>
     </a>
   );
 }
@@ -25,31 +25,64 @@ export function VPLogo({ size = 52 }: { size?: number }) {
 // ─── Nav ─────────────────────────────────────────────────────────────────────
 
 function AppNav({ active }: { active: string }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const items = [
     { id: "create",    label: "Send",      href: "/create" },
     { id: "dashboard", label: "Dashboard", href: "/dashboard" },
     { id: "audit",     label: "Audit",     href: "/audit" },
     { id: "docs",      label: "Docs",      href: "/docs" },
   ];
+
+  // Close mobile menu on route change / outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => setMenuOpen(false);
+    window.addEventListener("scroll", close, { once: true });
+    return () => window.removeEventListener("scroll", close);
+  }, [menuOpen]);
+
   return (
     <nav className="nav">
       <div className="nav-inner glass">
         <VPLogo />
+
+        {/* Desktop links */}
         <div className="nav-links">
+          {items.map((it) => (
+            <a key={it.id} href={it.href} className={"nav-link" + (active === it.id ? " is-active" : "")}>
+              {it.label}
+            </a>
+          ))}
+        </div>
+
+        <div className="nav-actions">
+          <ConnectWalletButton size="sm" />
+          {/* Hamburger — mobile only */}
+          <button
+            className="nav-burger btn btn-glass btn-sm"
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-label="Toggle menu"
+          >
+            {menuOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile dropdown */}
+      {menuOpen && (
+        <div className="nav-mobile glass">
           {items.map((it) => (
             <a
               key={it.id}
               href={it.href}
-              className={"nav-link" + (active === it.id ? " is-active" : "")}
+              className={"nav-mobile-link" + (active === it.id ? " is-active" : "")}
+              onClick={() => setMenuOpen(false)}
             >
               {it.label}
             </a>
           ))}
         </div>
-        <div className="nav-actions">
-          <ConnectWalletButton size="sm" />
-        </div>
-      </div>
+      )}
     </nav>
   );
 }
@@ -105,7 +138,7 @@ function ThemeFloater() {
   return (
     <button className="btn btn-glass btn-sm theme-floater" onClick={toggle} aria-label="Toggle theme">
       {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-      <span style={{ fontSize: 12 }}>{theme === "dark" ? "Light" : "Dark"}</span>
+      <span className="theme-floater-label">{theme === "dark" ? "Light" : "Dark"}</span>
     </button>
   );
 }

@@ -414,3 +414,105 @@ footer { padding:48px 0 32px;border-top:1px solid var(--hairline);margin-top:32p
 [data-theme='dark'] textarea { color: var(--ink) !important; background-color: var(--glass-bg-soft) !important; border-color: var(--hairline-strong) !important; }
 [data-theme='dark'] input::placeholder,
 [data-theme='dark'] textarea::placeholder { color: var(--ink-4) !important; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Mobile — portrait (≤ 640px)
+══════════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Nav: hamburger visible, desktop links hidden ─── */
+.nav-burger { display:none; }
+.nav-mobile { display:none; }
+
+@media (max-width:640px) {
+  /* Container: tighter side padding */
+  .container { padding:0 16px; }
+
+  /* Sections: less vertical space */
+  section { padding:48px 0; }
+  .app-head { padding:28px 0 12px; }
+  .app-section { padding:16px 0 40px; }
+
+  /* Nav: hide desktop links, show hamburger */
+  .nav { top:10px;margin:10px auto 0;width:calc(100% - 20px); }
+  .nav-inner { padding:8px 10px 8px 14px; }
+  .nav-links { display:none; }
+  .nav-logo-text { font-size:14px; }
+  .nav-burger { display:inline-flex; }
+
+  /* Mobile dropdown menu */
+  .nav-mobile {
+    display:flex;
+    flex-direction:column;
+    position:absolute;
+    top:calc(100% + 8px);
+    left:0;right:0;
+    padding:8px;
+    border-radius:var(--radius-lg);
+    z-index:39;
+  }
+  .nav-mobile-link {
+    display:block;
+    padding:13px 16px;
+    border-radius:var(--radius-sm);
+    color:var(--ink-2);
+    font-size:15px;
+    font-weight:500;
+    transition:background 0.15s,color 0.15s;
+  }
+  .nav-mobile-link:hover,.nav-mobile-link.is-active {
+    background:var(--glass-bg-strong);
+    color:var(--ink);
+  }
+
+  /* Logo mark: slightly smaller on mobile */
+  .logo-mark { width:38px !important;height:38px !important;border-radius:10px !important; }
+
+  /* Theme floater: move to bottom-left, icon-only */
+  .theme-floater { top:auto;bottom:16px;right:auto;left:16px;transform:none;padding:8px; }
+  .theme-floater-label { display:none; }
+
+  /* Typography */
+  .h2 { font-size:clamp(28px,8vw,40px); }
+  .lead { font-size:15px; }
+  .eyebrow { font-size:10.5px; }
+
+  /* Cards: tighter padding on mobile */
+  .card-pad-lg { padding:22px 18px; }
+
+  /* Claim amount: smaller on portrait mobile */
+  .claim-amount { font-size:48px;letter-spacing:-0.03em; }
+
+  /* Segmented controls: allow wrapping */
+  .seg { flex-wrap:wrap; }
+
+  /* Layouts: single column */
+  .layout-2 { grid-template-columns:1fr; }
+  .vk-grid { grid-template-columns:1fr; }
+  .audit-stats { grid-template-columns:repeat(2,1fr); }
+  .dash-top { grid-template-columns:1fr; }
+
+  /* Footer: stack on mobile */
+  .footer-inner { flex-direction:column;align-items:start;gap:16px; }
+  .footer-links { gap:16px; }
+
+  /* Features grid: single column */
+  .features { grid-template-columns:1fr; }
+
+  /* Hero: single column */
+  .hero-grid { grid-template-columns:1fr; }
+  .hero-stage { display:none; } /* hide animation panel on mobile */
+
+  /* Pricing: single column (already has a media query but ensure 380px works) */
+  .pricing { grid-template-columns:1fr; }
+
+  /* Input amount: smaller font so it fits */
+  .input-amount { font-size:36px; }
+
+  /* Mode selector on send page: stack vertically on very small screens */
+  /* (keep 2-col until 360px) */
+}
+
+@media (max-width:380px) {
+  /* Extra small phones: stack mode selector */
+  .seg button { padding:7px 10px;font-size:12px; }
+}
