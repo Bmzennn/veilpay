@@ -197,9 +197,10 @@ export async function preloadCreateAssets() {
   log("[zkCache] Proactive pre-load started for 'send' circuits...");
   try {
     const provider = getPersistentZkAssetProvider();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await Promise.all([
-      provider.getAssetUrls("userregistration"),
-      provider.getAssetUrls("receiverclaimableutxofrompublicbalance")
+      provider.getAssetUrls("userregistration" as any),
+      provider.getAssetUrls("receiverclaimableutxofrompublicbalance" as any)
     ]);
     log("[zkCache] Proactive pre-load complete.");
   } catch (e) {
@@ -217,8 +218,8 @@ export async function preloadClaimAssets() {
   log("[zkCache] Proactive pre-load started for 'claim' circuits...");
   try {
     const provider = getPersistentZkAssetProvider();
-    // This triggers the fetch-and-cache logic inside the provider
-    await provider.getAssetUrls("claimreceiverclaimableutxointoencryptedbalance");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await provider.getAssetUrls("claimreceiverclaimableutxointoencryptedbalance" as any);
     log("[zkCache] Proactive pre-load complete.");
   } catch (e) {
     warn("[zkCache] Proactive pre-load failed (will retry on-demand):", e);

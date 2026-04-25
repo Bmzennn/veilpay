@@ -1,10 +1,9 @@
+/* @import rules must precede all other rules — Google Fonts first, then Tailwind */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap');
 @import "tailwindcss";
 
 /* Tailwind dark variant: responds to data-theme AND .dark class */
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *, .dark, .dark *));
-
-/* Google Fonts — loaded here so layout.tsx stays clean */
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap');
 
 /* ══════════════════════════════════════════════════════════════════════════════
    VeilPay Design System — Liquid Glass
