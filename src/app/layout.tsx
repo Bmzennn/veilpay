@@ -7,6 +7,13 @@ export const metadata: Metadata = {
   description:
     "Send and receive private crypto payments on Solana. Zero on-chain link between sender and recipient.",
   referrer: "no-referrer",
+  icons: {
+    icon: [
+      { url: "/icon.png", type: "image/png", sizes: "192x192" },
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+    ],
+    apple: { url: "/apple-icon.png", sizes: "180x180", type: "image/png" },
+  },
 };
 
 // Reads theme from localStorage before React hydrates to prevent flash.
