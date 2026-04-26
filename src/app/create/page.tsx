@@ -402,22 +402,24 @@ export default function CreatePage() {
         token,
         onStatusChange: (msg) => {
           setStatusMsg(msg);
-          // 6-step mapping — each fires on a distinct umbra.ts onStatusChange message:
+          // 7-step mapping — each fires on a precise umbra.ts onStatusChange message:
           // 1 → Funding            (wallet sig 1 — SOL transfer)
           // 2 → Channel setup      (ephemeral ZK registration, no wallet)
           // 3 → Verifying account  (sender check — fires for ALL users)
           // 4 → Account setup      (wallet sigs 2–4 if first time, instant if returning)
-          // 5 → Computing proof    (ZK proof generation, ~20–30s, no wallet)
-          // 6 → Depositing         (fires from onProofComputation.post, wallet sig next)
+          // 5 → Computing proof    (ZK generation ~30s, no wallet)
+          // 6 → Depositing         (fires from onProofComputation.post — 2 wallet sigs follow)
+          // 7 → Confirmed          (fires after BOTH deposit txs confirm — truly done)
           if (msg.includes("Funding")) setProgressStep(1);
           else if (msg.includes("Registering privacy") || msg.includes("Registering ephemeral")) setProgressStep(2);
           else if (msg.includes("Verifying sender")) setProgressStep(3);
           else if (msg.includes("Registering sender")) setProgressStep(4);
           else if (msg.includes("Computing deposit proof")) setProgressStep(5);
           else if (msg.includes("Depositing") || msg.includes("shielded")) setProgressStep(6);
+          else if (msg.includes("Deposit confirmed")) setProgressStep(7);
           // Coarse step for isProcessing logic
           if (msg.includes("Registering") || msg.includes("Verifying")) setStep("registering");
-          if (msg.includes("Depositing") || msg.includes("Computing")) setStep("creating");
+          if (msg.includes("Depositing") || msg.includes("Computing") || msg.includes("Deposit confirmed")) setStep("creating");
         },
         recipientAddress: mode === "locked" ? recipientAddress : undefined,
         memo: memo.trim() || undefined,
@@ -461,10 +463,11 @@ export default function CreatePage() {
   const LINK_STEPS = [
     { label: "Funding channel",   hint: "Wallet prompt 1 — SOL transfer to ephemeral" },
     { label: "Channel setup",     hint: "Registering ephemeral with Umbra (no wallet)" },
-    { label: "Verifying account", hint: "Checking sender registration status" },
-    { label: "Account setup",     hint: "Wallet prompts 2–4 if first time — otherwise instant" },
-    { label: "Computing proof",   hint: "Generating ZK proof locally (20–30s, no wallet)" },
-    { label: "Depositing",        hint: "Wallet prompt — signing deposit transaction" },
+    { label: "Verifying account", hint: "Checking sender registration" },
+    { label: "Account setup",     hint: "Wallet prompts 2–4 if first time — instant if returning" },
+    { label: "Computing proof",   hint: "Generating ZK proof locally (~30s, no wallet)" },
+    { label: "Depositing",        hint: "2 wallet signatures — proof account, then UTXO" },
+    { label: "Confirmed",         hint: "Both transactions confirmed — generating link…" },
   ];
 
   const CONF_STEPS = [

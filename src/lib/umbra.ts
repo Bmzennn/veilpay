@@ -1193,6 +1193,8 @@ export async function createPaymentLink({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         amount: amountRaw as any,
       });
+      // Both deposit transactions confirmed — advance the UI to the final step
+      onStatusChange("Deposit confirmed.");
       log("[createPaymentLink] step 4b createUtxo OK — UTXO should now be in indexer");
       try {
         await debugLogRecentUtxos(ephemeralSigner.address.toString(), 5);
