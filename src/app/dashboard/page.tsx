@@ -61,32 +61,50 @@ function Sparkline({ points }: { points: number[] }) {
   );
 }
 
-// ─── Token price fetcher (Jupiter Price API — no key required) ────────────────
-// Returns USD prices for all tokens with a balance. Falls back to 0 on error.
+// ─── Token price fetcher ──────────────────────────────────────────────────────
+// Uses CoinGecko IDs (not mint addresses) so devnet and mainnet both work.
+// Stablecoins are hardcoded at $1 — they don't need an API call.
+
+const COINGECKO_IDS: Partial<Record<Token, string>> = {
+  SOL:  "solana",
+  BONK: "bonk",
+  JUP:  "jupiter-exchange-solana",
+  WIF:  "dogwifcoin",
+};
+const STABLE_USD: Partial<Record<Token, number>> = {
+  USDC: 1.00,
+  USDT: 1.00,
+};
+
 async function fetchTokenPrices(tokens: Token[]): Promise<Record<Token, number>> {
-  // Jupiter v2 price API — no key required, returns prices in USD.
-  // price field is a STRING ("163.52"), not a number — must parseFloat.
-  // Mint addresses are alphanumeric so no encoding needed; encode only the
-  // separator to avoid accidental encoding of commas.
-  const mints = tokens.map((t) => TOKEN_CONFIG[t].mint).join(",");
+  const prices: Partial<Record<Token, number>> = {};
+
+  // Stablecoins: hardcode $1 — no API call needed, works on any network
+  for (const token of tokens) {
+    if (STABLE_USD[token] !== undefined) prices[token] = STABLE_USD[token]!;
+  }
+
+  // Non-stablecoins: fetch from CoinGecko using stable coin IDs (network-agnostic)
+  const toFetch = tokens.filter((t) => COINGECKO_IDS[t]);
+  if (toFetch.length === 0) return { ...Object.fromEntries(tokens.map((t) => [t, 0])), ...prices } as Record<Token, number>;
+
+  const ids = toFetch.map((t) => COINGECKO_IDS[t]!).join(",");
   try {
     const res = await fetch(
-      `https://lite-api.jup.ag/price/v2?ids=${mints}`,
+      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`,
       { signal: AbortSignal.timeout(8000) }
     );
-    if (!res.ok) throw new Error(`Price API ${res.status}`);
-    const json = await res.json() as { data: Record<string, { price: string | number } | null> };
-    const prices: Partial<Record<Token, number>> = {};
-    for (const token of tokens) {
-      const mint = TOKEN_CONFIG[token].mint;
-      const entry = json.data[mint];
-      // price arrives as a string — parseFloat handles both "163.52" and 163.52
-      prices[token] = entry ? (parseFloat(String(entry.price)) || 0) : 0;
+    if (!res.ok) throw new Error(`CoinGecko ${res.status}`);
+    const json = await res.json() as Record<string, { usd: number }>;
+    for (const token of toFetch) {
+      const id = COINGECKO_IDS[token]!;
+      prices[token] = json[id]?.usd ?? 0;
     }
-    return prices as Record<Token, number>;
   } catch {
-    return Object.fromEntries(tokens.map((t) => [t, 0])) as Record<Token, number>;
+    for (const token of toFetch) prices[token] = 0;
   }
+
+  return { ...Object.fromEntries(tokens.map((t) => [t, 0])), ...prices } as Record<Token, number>;
 }
 
 export default function DashboardPage() {

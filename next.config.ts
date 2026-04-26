@@ -41,8 +41,7 @@ const securityHeaders = [
         "https://*.quicknode.com",
         "https://*.alchemy.com",
         "https://solscan.io",
-        "https://lite-api.jup.ag",   // Jupiter price API for USD balance display
-        "https://price.jup.ag",      // Jupiter price API (legacy endpoint)
+        "https://api.coingecko.com", // CoinGecko price API for USD balance display
       ].join(" "),
       "worker-src 'self' blob:",
       "frame-ancestors 'none'",
