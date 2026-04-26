@@ -1155,15 +1155,24 @@ export async function createPaymentLink({
     }
 
     // 4b. Create receiver-claimable UTXO from sender → ephemeral (public balance).
-    // Two sub-phases: ZK proof generation (20–30s, no wallet), then the actual
-    // deposit transaction (wallet signature required).
+    // Three sub-phases:
+    //   "Computing deposit proof…"   → step 5 fires here (ZK running, no wallet)
+    //   "Depositing into shielded pool…" → step 6 fires from onProofComputation.post
+    //                                       (proof done, wallet sig about to appear)
     onStatusChange("Computing deposit proof…");
+    const _deps = makeZkProverDeps();
     const utxoProver = getCreateReceiverClaimableUtxoFromPublicBalanceProver({
-      ...makeZkProverDeps(),
+      assetProvider: _deps.assetProvider,
       callbacks: {
+        ..._deps.callbacks,   // preserve all existing callbacks (onZkeyDownload etc.)
         onProofComputation: {
-          pre:  async () => { /* proof starts — already on step 5 */ },
-          post: async () => { onStatusChange("Depositing into shielded pool…"); },
+          pre:  _deps.callbacks.onProofComputation?.pre,
+          post: async () => {
+            // Original post-hook (logs proof done)
+            await _deps.callbacks.onProofComputation?.post?.();
+            // Advance to step 6 — wallet signature is next
+            onStatusChange("Depositing into shielded pool…");
+          },
         },
       },
     });

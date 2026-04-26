@@ -402,17 +402,19 @@ export default function CreatePage() {
         token,
         onStatusChange: (msg) => {
           setStatusMsg(msg);
-          // Steps fire on precise umbra.ts messages — order matches actual execution:
-          // 1 → Funding (wallet sig 1)
-          // 2 → Registering privacy channel (ephemeral, no wallet)
-          // 3 → Verifying sender account (fires for ALL users now)
-          // 4 → Computing deposit proof (ZK, no wallet, ~20-30s)
-          // 5 → Depositing (fires after proof completes, wallet sig)
+          // 6-step mapping — each fires on a distinct umbra.ts onStatusChange message:
+          // 1 → Funding            (wallet sig 1 — SOL transfer)
+          // 2 → Channel setup      (ephemeral ZK registration, no wallet)
+          // 3 → Verifying account  (sender check — fires for ALL users)
+          // 4 → Account setup      (wallet sigs 2–4 if first time, instant if returning)
+          // 5 → Computing proof    (ZK proof generation, ~20–30s, no wallet)
+          // 6 → Depositing         (fires from onProofComputation.post, wallet sig next)
           if (msg.includes("Funding")) setProgressStep(1);
           else if (msg.includes("Registering privacy") || msg.includes("Registering ephemeral")) setProgressStep(2);
-          else if (msg.includes("Verifying sender") || msg.includes("Registering sender")) setProgressStep(3);
-          else if (msg.includes("Computing deposit proof")) setProgressStep(4);
-          else if (msg.includes("Depositing") || msg.includes("shielded")) setProgressStep(5);
+          else if (msg.includes("Verifying sender")) setProgressStep(3);
+          else if (msg.includes("Registering sender")) setProgressStep(4);
+          else if (msg.includes("Computing deposit proof")) setProgressStep(5);
+          else if (msg.includes("Depositing") || msg.includes("shielded")) setProgressStep(6);
           // Coarse step for isProcessing logic
           if (msg.includes("Registering") || msg.includes("Verifying")) setStep("registering");
           if (msg.includes("Depositing") || msg.includes("Computing")) setStep("creating");
@@ -457,11 +459,12 @@ export default function CreatePage() {
   };
 
   const LINK_STEPS = [
-    { label: "Funding channel",        hint: "Wallet prompt 1 — SOL transfer to ephemeral" },
-    { label: "Privacy channel setup",  hint: "Registering ephemeral with Umbra (no wallet)" },
-    { label: "Verifying account",      hint: "Checking sender registration" },
-    { label: "Computing proof",        hint: "Generating ZK proof locally (20–30s, no wallet)" },
-    { label: "Depositing",             hint: "Wallet prompt — signing deposit transaction" },
+    { label: "Funding channel",   hint: "Wallet prompt 1 — SOL transfer to ephemeral" },
+    { label: "Channel setup",     hint: "Registering ephemeral with Umbra (no wallet)" },
+    { label: "Verifying account", hint: "Checking sender registration status" },
+    { label: "Account setup",     hint: "Wallet prompts 2–4 if first time — otherwise instant" },
+    { label: "Computing proof",   hint: "Generating ZK proof locally (20–30s, no wallet)" },
+    { label: "Depositing",        hint: "Wallet prompt — signing deposit transaction" },
   ];
 
   const CONF_STEPS = [
