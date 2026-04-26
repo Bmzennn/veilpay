@@ -402,15 +402,20 @@ export default function CreatePage() {
         token,
         onStatusChange: (msg) => {
           setStatusMsg(msg);
-          // Map status messages → fine-grained step number (1–5)
-          if (msg.includes("keypair") || msg.includes("Generating")) setProgressStep(1);
-          else if (msg.includes("Funding")) setProgressStep(2);
-          else if (msg.includes("Registering privacy") || msg.includes("Registering ephemeral")) setProgressStep(3);
-          else if (msg.includes("sender") || msg.includes("first time")) setProgressStep(4);
-          else if (msg.includes("Depositing") || msg.includes("shielded") || msg.includes("Shielding")) setProgressStep(5);
-          // Also drive coarse step for backward compat
-          if (msg.includes("Registering") || msg.includes("Setting up")) setStep("registering");
-          if (msg.includes("Depositing") || msg.includes("Shielding") || msg.includes("shielded")) setStep("creating");
+          // Steps fire on precise umbra.ts messages — order matches actual execution:
+          // 1 → Funding (wallet sig 1)
+          // 2 → Registering privacy channel (ephemeral, no wallet)
+          // 3 → Verifying sender account (fires for ALL users now)
+          // 4 → Computing deposit proof (ZK, no wallet, ~20-30s)
+          // 5 → Depositing (fires after proof completes, wallet sig)
+          if (msg.includes("Funding")) setProgressStep(1);
+          else if (msg.includes("Registering privacy") || msg.includes("Registering ephemeral")) setProgressStep(2);
+          else if (msg.includes("Verifying sender") || msg.includes("Registering sender")) setProgressStep(3);
+          else if (msg.includes("Computing deposit proof")) setProgressStep(4);
+          else if (msg.includes("Depositing") || msg.includes("shielded")) setProgressStep(5);
+          // Coarse step for isProcessing logic
+          if (msg.includes("Registering") || msg.includes("Verifying")) setStep("registering");
+          if (msg.includes("Depositing") || msg.includes("Computing")) setStep("creating");
         },
         recipientAddress: mode === "locked" ? recipientAddress : undefined,
         memo: memo.trim() || undefined,
@@ -452,11 +457,11 @@ export default function CreatePage() {
   };
 
   const LINK_STEPS = [
-    { label: "Generate keys",          hint: "Creating one-time ephemeral keypair" },
-    { label: "Fund channel",           hint: "Wallet request 1 — SOL transfer to ephemeral" },
-    { label: "Privacy channel setup",  hint: "Registering ephemeral with Umbra protocol" },
-    { label: "Account registration",   hint: "Wallet requests 2–4 — first time only" },
-    { label: "Deposit to pool",        hint: "Wallet request 5 — creating private UTXO" },
+    { label: "Funding channel",        hint: "Wallet prompt 1 — SOL transfer to ephemeral" },
+    { label: "Privacy channel setup",  hint: "Registering ephemeral with Umbra (no wallet)" },
+    { label: "Verifying account",      hint: "Checking sender registration" },
+    { label: "Computing proof",        hint: "Generating ZK proof locally (20–30s, no wallet)" },
+    { label: "Depositing",             hint: "Wallet prompt — signing deposit transaction" },
   ];
 
   const CONF_STEPS = [
@@ -517,7 +522,7 @@ export default function CreatePage() {
                       {LINK_STEPS[progressStep - 1]?.label}
                     </p>
                     <p style={{ fontSize: 12, color: "var(--vp-sky-deep)", fontFamily: "var(--font-mono)", fontWeight: 600, margin: "0 0 18px", letterSpacing: "0.04em" }}>
-                      {progressStep} / {LINK_STEPS.length}
+                      {Math.min(progressStep, LINK_STEPS.length)} / {LINK_STEPS.length}
                     </p>
 
                     {/* Segmented progress bar */}

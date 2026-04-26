@@ -1112,6 +1112,9 @@ export async function createPaymentLink({
     //     triggers a signMessage (master seed) and signTransaction (ZK
     //     registration) prompt in the wallet.
     try {
+      // Always fire this message so the step-4 progress segment advances
+      // for both first-time and returning senders (not just when registration is needed).
+      onStatusChange("Verifying sender account…");
       const senderAccountQuerier = getUserAccountQuerierFunction({ client: senderClient });
       const senderAccountState = await senderAccountQuerier(senderSigner.address as Address);
       const needsRegistration =
@@ -1120,7 +1123,7 @@ export async function createPaymentLink({
         !senderAccountState.data.isUserAccountX25519KeyRegistered;
 
       if (needsRegistration) {
-        onStatusChange("Registering sender privacy account (first time only)…");
+        onStatusChange("Registering sender account (wallet prompts 2–4)…");
         log("[createPaymentLink] step 4a: needs registration, building prover…");
         const senderRegProver = getUserRegistrationProver(makeZkProverDeps());
         log("[createPaymentLink] step 4a: prover built, calling senderRegister…");
@@ -1151,9 +1154,19 @@ export async function createPaymentLink({
       throw new Error(`[step 4a sender-register] ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    // 4b. Create receiver-claimable UTXO from sender → ephemeral (public balance)
-    onStatusChange("Depositing into shielded pool…");
-    const utxoProver = getCreateReceiverClaimableUtxoFromPublicBalanceProver(makeZkProverDeps());
+    // 4b. Create receiver-claimable UTXO from sender → ephemeral (public balance).
+    // Two sub-phases: ZK proof generation (20–30s, no wallet), then the actual
+    // deposit transaction (wallet signature required).
+    onStatusChange("Computing deposit proof…");
+    const utxoProver = getCreateReceiverClaimableUtxoFromPublicBalanceProver({
+      ...makeZkProverDeps(),
+      callbacks: {
+        onProofComputation: {
+          pre:  async () => { /* proof starts — already on step 5 */ },
+          post: async () => { onStatusChange("Depositing into shielded pool…"); },
+        },
+      },
+    });
     const createUtxo = getPublicBalanceToReceiverClaimableUtxoCreatorFunction(
       { client: senderClient },
       { zkProver: utxoProver }
