@@ -34,7 +34,20 @@ async function issueInvoice(): Promise<{ invoiceId: Uint8Array; invoiceIdHex: st
 
   const client = getSupabaseServiceClient();
   if (client) {
-    await client.from("x402_invoices").insert({ id: invoiceIdHex, expires_at: expiresAt, consumed: false });
+    const { error } = await client
+      .from("x402_invoices")
+      .insert({ id: invoiceIdHex, expires_at: expiresAt, consumed: false });
+
+    if (error) {
+      // Supabase insert failed — most likely the x402_invoices table doesn't exist.
+      // Fall back to in-memory, but warn loudly: this breaks on serverless (cross-instance).
+      console.error(
+        "[x402] Supabase invoice insert failed:", error.message,
+        "\n  ⚠️  Falling back to in-memory store — invoices WILL break across serverless instances.",
+        "\n  ⚠️  Run the x402 table setup SQL in your Supabase project to fix this permanently."
+      );
+      _memInvoices.set(invoiceIdHex, Date.now() + INVOICE_TTL_MS);
+    }
   } else {
     _memInvoices.set(invoiceIdHex, Date.now() + INVOICE_TTL_MS);
   }
@@ -56,7 +69,16 @@ async function consumeInvoice(invoiceIdHex: string): Promise<boolean> {
       .gt("expires_at", new Date().toISOString())
       .select("id");
 
-    if (error || !data || data.length === 0) return false;
+    if (error) {
+      // Table likely missing — check in-memory fallback before failing.
+      console.error("[x402] Supabase consume failed:", error.message, "— checking in-memory fallback");
+      const exp = _memInvoices.get(invoiceIdHex);
+      if (!exp || Date.now() > exp) return false;
+      _memInvoices.delete(invoiceIdHex);
+      return true;
+    }
+
+    if (!data || data.length === 0) return false;
     return true;
   }
 
