@@ -5,13 +5,18 @@ import { useWalletContext } from "@/components/WalletContext";
 import { WalletButton } from "@/components/WalletButton";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { LiquidButton } from "@/components/ui/LiquidButton";
-import { 
-  getUmbraClient, 
-  getPublicBalanceToReceiverClaimableUtxoCreatorFunction 
+import {
+  getPublicBalanceToReceiverClaimableUtxoCreatorFunction,
+  getUserAccountQuerierFunction,
+  getUserRegistrationFunction,
 } from "@umbra-privacy/sdk";
-import { createBrowserSigner, makeZkProverDeps, preloadCreateAssets } from "@/lib/umbra";
-import { getCreateReceiverClaimableUtxoFromPublicBalanceProver } from "@umbra-privacy/web-zk-prover";
-import { RPC_URL, RPC_WS_URL, UMBRA_INDEXER_URL, NETWORK, TOKEN_CONFIG } from "@/lib/constants";
+import {
+  getCreateReceiverClaimableUtxoFromPublicBalanceProver,
+  getUserRegistrationProver,
+} from "@umbra-privacy/web-zk-prover";
+import { createBrowserSigner, makeZkProverDeps, preloadCreateAssets, makeClient } from "@/lib/umbra";
+import { TOKEN_CONFIG } from "@/lib/constants";
+import { getSolBalance } from "@/lib/solana";
 import type { Token } from "@/types";
 import type { Address } from "@solana/kit";
 import { motion, AnimatePresence } from "framer-motion";
@@ -22,10 +27,12 @@ const INVOICE_AMOUNT_SOL = 0.1;
 export default function TestX402Page() {
   const { wallet, account, connected } = useWalletContext();
 
-  // Background pre-load for ZK files
+  // Preload ZK assets in the background so the ZK proof step is faster
   useEffect(() => {
-    preloadCreateAssets();
-  }, []);
+    if (connected) {
+      preloadCreateAssets().catch(() => {});
+    }
+  }, [connected]);
 
   const [status, setStatus] = useState<string>("");
   const [premiumData, setPremiumData] = useState<any>(null);
@@ -38,13 +45,20 @@ export default function TestX402Page() {
     }
 
     setLoading(true);
-    setStatus("Requesting premium data...");
+    setStatus("Checking balance…");
     setPremiumData(null);
 
     try {
+      // 0. Check SOL Balance
+      const balance = await getSolBalance(account.address);
+      const minRequired = INVOICE_AMOUNT_SOL + 0.02; // amount + buffer for reg/rent
+      if (balance < minRequired) {
+        throw new Error(`Insufficient SOL. You have ${balance.toFixed(3)} SOL but need at least ${minRequired.toFixed(3)} SOL for the payment and Umbra registration fees.`);
+      }
+
       // 1. Initial Request (triggers 402)
       const initialRes = await fetch("/api/premium-data");
-      
+
       if (initialRes.status !== 402) {
         const data = await initialRes.json();
         setPremiumData(data);
@@ -55,58 +69,76 @@ export default function TestX402Page() {
 
       // 2. Parse Invoice
       const { invoice } = await initialRes.json();
-      setStatus(`Invoice Received: ${invoice.amount} ${invoice.token}. Preparing Shielded Deposit...`);
+      setStatus(`Invoice received: ${invoice.amount} ${invoice.token}. Preparing shielded payment…`);
 
-      // 3. Setup Umbra Client using browser wallet
+      // 3. Setup Umbra client with connected wallet
       const signer = createBrowserSigner(wallet, account);
-      const client = await getUmbraClient({
-        signer,
-        network: NETWORK,
-        rpcUrl: RPC_URL,
-        rpcSubscriptionsUrl: RPC_WS_URL,
-        indexerApiEndpoint: UMBRA_INDEXER_URL,
-        deferMasterSeedSignature: true,
+      const client = await makeClient(signer as any, { skipPreflight: true });
+
+      // 4. Ensure payer is registered with Umbra (required for UTXO creation)
+      setStatus("Verifying payer account with Umbra…");
+      const querier = getUserAccountQuerierFunction({ client });
+      const state   = await querier(signer.address as Address);
+      const needsReg = state.state !== "exists"
+        || !state.data.isUserCommitmentRegistered
+        || !state.data.isUserAccountX25519KeyRegistered;
+
+      if (needsReg) {
+        setStatus("Registering with Umbra (wallet will prompt 2–4 times)…");
+        const regProver = getUserRegistrationProver(makeZkProverDeps());
+        const register  = getUserRegistrationFunction({ client }, { zkProver: regProver });
+        await register({ confidential: true, anonymous: true });
+      }
+
+      // 5. Create receiver-claimable UTXO — invoiceId embedded in optionalData
+      //    Two transactions: createProofAccount + createUtxo (wallet prompts twice)
+      setStatus("Computing ZK proof for shielded payment (15–30s)…");
+
+      const tokenCfg    = TOKEN_CONFIG[invoice.token as Token];
+      const amountRaw   = BigInt(Math.round(invoice.amount * 10 ** tokenCfg.decimals));
+      const invoiceBytes = new Uint8Array(
+        (invoice.invoiceId as string).match(/.{1,2}/g)!.map((b: string) => parseInt(b, 16))
+      );
+
+      const proverDeps = makeZkProverDeps();
+      const utxoProver = getCreateReceiverClaimableUtxoFromPublicBalanceProver({
+        assetProvider: proverDeps.assetProvider,
+        callbacks:     proverDeps.callbacks,
       });
-
-      // 4. Execute Stealth Deposit
-      setStatus("Generating ZK Proof... (This takes ~20s)");
-      const tokenCfg = TOKEN_CONFIG[invoice.token as Token];
-      const amountRaw = BigInt(Math.round(invoice.amount * 10 ** tokenCfg.decimals));
-      const invoiceIdBytes = new Uint8Array(Buffer.from(invoice.invoiceId, "hex"));
-
-      const utxoProver = getCreateReceiverClaimableUtxoFromPublicBalanceProver(makeZkProverDeps());
       const createUtxo = getPublicBalanceToReceiverClaimableUtxoCreatorFunction(
         { client },
         { zkProver: utxoProver }
       );
 
-      // createUtxo returns an object { createUtxoSignature, createProofAccountSignature, ... }
-      const result = await createUtxo({
-        destinationAddress: invoice.destination as Address,
-        mint: tokenCfg.mint as Address,
-        amount: amountRaw as any,
-      }, {
-        optionalData: invoiceIdBytes as any
-      });
+      setStatus("Signing shielded UTXO transactions (wallet will prompt twice)…");
 
-      console.log("[testPayment] Deposit Result:", result);
-      
-      const depositTxSig = result.createUtxoSignature;
-      const proofTxSig = result.createProofAccountSignature;
+      const result = await createUtxo(
+        {
+          destinationAddress: invoice.destination as Address,
+          mint:               tokenCfg.mint as Address,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          amount:             amountRaw as any,
+        },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { optionalData: invoiceBytes as any }
+      );
 
-      setStatus("Deposit confirmed! Verifying with server...");
+      const proofTxSig = result.createProofAccountSignature.toString();
+      const depositSig = result.createUtxoSignature.toString();
 
-      // 5. Retry Request with Proof of Payment
+      setStatus("UTXO created! Verifying with server…");
+
+      // 6. Retry with x402 Authorization header
       const finalRes = await fetch("/api/premium-data", {
         headers: {
-          "Authorization": `x402 ${proofTxSig}:${depositTxSig}:${invoice.invoiceId}`
-        }
+          "Authorization": `x402 ${proofTxSig}:${depositSig}:${invoice.invoiceId}`,
+        },
       });
 
       const resultBody = await finalRes.json();
       if (finalRes.ok) {
         setPremiumData(resultBody.data);
-        setStatus("Payment Verified! Data Unlocked.");
+        setStatus("Payment verified! Data unlocked.");
       } else {
         throw new Error(resultBody.error || "Verification failed");
       }
@@ -220,7 +252,7 @@ export default function TestX402Page() {
               </div>
               <div className="space-y-2 text-green-700">
                 <p className="font-medium">{premiumData.message}</p>
-                <p className="text-sm italic">"{premiumData.secretData}"</p>
+                <p className="text-sm italic">&quot;{premiumData.secretData}&quot;</p>
               </div>
               <div className="pt-2 border-t border-green-100/50">
                 <p className="text-[9px] text-green-600/60 font-mono break-all uppercase tracking-tighter">
@@ -239,7 +271,7 @@ export default function TestX402Page() {
         animate={{ opacity: 1 }}
         transition={{ delay: 0.8 }}
       >
-        VeilPay x402 Protocol · Instant Shielded Verification
+        VeilPay x402 Protocol · Shielded UTXO · Fully Unlinkable
       </motion.p>
     </div>
   );

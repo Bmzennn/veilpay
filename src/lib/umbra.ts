@@ -332,7 +332,7 @@ function encodeTransactionToWire(
   return wire;
 }
 
-function makeSkipPreflightForwarder() {
+export function makeSkipPreflightForwarder() {
   const conn = new Connection(RPC_URL, "confirmed");
 
   type SdkSignedTx = { messageBytes: Uint8Array; signatures: Record<string, Uint8Array | null> };

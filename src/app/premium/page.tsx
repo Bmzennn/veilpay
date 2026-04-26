@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { useWalletContext } from "@/components/WalletContext";
-import { getUmbraClient, getPublicBalanceToReceiverClaimableUtxoCreatorFunction } from "@umbra-privacy/sdk";
+import { getPublicBalanceToReceiverClaimableUtxoCreatorFunction } from "@umbra-privacy/sdk";
 import { getCreateReceiverClaimableUtxoFromPublicBalanceProver } from "@umbra-privacy/web-zk-prover";
-import { createBrowserSigner, makeZkProverDeps } from "@/lib/umbra";
-import { RPC_URL, UMBRA_INDEXER_URL, NETWORK, TOKEN_CONFIG } from "@/lib/constants";
+import { createBrowserSigner, makeZkProverDeps, makeClient } from "@/lib/umbra";
+import { TOKEN_CONFIG } from "@/lib/constants";
+import { getSolBalance } from "@/lib/solana";
 import type { Address } from "@solana/kit";
 import { Check, Zap, Shield, Lock, Unlock, Activity, AlertTriangle, ArrowRight } from "lucide-react";
 
@@ -79,8 +80,15 @@ function X402Demo() {
     if (!connected || !wallet || !account) { setError("Please connect your wallet first."); return; }
     setLoading(true);
     setError(null);
-    setStatus("Initializing payment pipeline…");
+    setStatus("Checking balance…");
     try {
+      const balance = await getSolBalance(account.address);
+      const minRequired = 0.12; 
+      if (balance < minRequired) {
+        throw new Error(`Insufficient SOL. You have ${balance.toFixed(3)} SOL but need at least ${minRequired.toFixed(3)} SOL.`);
+      }
+
+      setStatus("Initializing payment pipeline…");
       const initialRes = await fetch("/api/premium-data");
       if (initialRes.status !== 402) {
         const data = await initialRes.json();
@@ -89,7 +97,7 @@ function X402Demo() {
       }
       const { invoice } = await initialRes.json();
       const signer = createBrowserSigner(wallet, account);
-      const client = await getUmbraClient({ signer, network: NETWORK, rpcUrl: RPC_URL, rpcSubscriptionsUrl: RPC_URL.replace("http", "ws"), indexerApiEndpoint: UMBRA_INDEXER_URL, deferMasterSeedSignature: true });
+      const client = await makeClient(signer as any, { skipPreflight: true });
       setStatus("Generating ZK Proof for payment (15-30s)…");
       const prover = getCreateReceiverClaimableUtxoFromPublicBalanceProver(makeZkProverDeps());
       const createUtxo = getPublicBalanceToReceiverClaimableUtxoCreatorFunction({ client }, { zkProver: prover });
