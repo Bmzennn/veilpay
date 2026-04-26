@@ -726,10 +726,18 @@ export default function CreatePage() {
                   </div>
                 ) : (
                   <>
-                    <div style={{ padding: "12px 14px", borderRadius: "var(--radius-sm)", background: "rgba(107,124,255,0.06)", border: "0.5px solid rgba(107,124,255,0.2)", marginBottom: 20 }}>
+                    <div style={{ padding: "12px 14px", borderRadius: "var(--radius-sm)", background: "rgba(107,124,255,0.06)", border: "0.5px solid rgba(107,124,255,0.2)", marginBottom: 12 }}>
                       <p style={{ fontSize: 12.5, color: "var(--ink-2)", margin: 0, lineHeight: 1.6 }}>
-                        <strong>Confidential transfer</strong> — amount is hidden on-chain. Funds land in the recipient&apos;s encrypted VeilPay balance.{" "}
+                        <strong>Confidential transfer</strong> — amount is hidden on-chain via Arcium MPC. Funds land in the recipient&apos;s encrypted VeilPay balance.{" "}
                         They must have connected to VeilPay at least once to receive.
+                      </p>
+                    </div>
+                    <div style={{ padding: "10px 14px", borderRadius: "var(--radius-sm)", background: "rgba(245,158,11,0.06)", border: "0.5px solid rgba(245,158,11,0.2)", marginBottom: 20, display: "flex", gap: 10, alignItems: "start" }}>
+                      <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚠️</span>
+                      <p style={{ fontSize: 12, color: "var(--ink-3)", margin: 0, lineHeight: 1.6 }}>
+                        <strong style={{ color: "var(--ink-2)" }}>Phantom simulation warning expected.</strong>{" "}
+                        Your wallet will show &ldquo;This transaction could not be simulated&rdquo; — this is normal for ZK-based MPC transactions.
+                        The transfer succeeds regardless. Click <strong style={{ color: "var(--ink-2)" }}>Proceed Anyway</strong> to continue.
                       </p>
                     </div>
 
