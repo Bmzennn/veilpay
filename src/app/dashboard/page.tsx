@@ -61,10 +61,36 @@ function Sparkline({ points }: { points: number[] }) {
   );
 }
 
+// ─── Token price fetcher (Jupiter Price API — no key required) ────────────────
+// Returns USD prices for all tokens with a balance. Falls back to 0 on error.
+async function fetchTokenPrices(tokens: Token[]): Promise<Record<Token, number>> {
+  const mints = tokens.map((t) => TOKEN_CONFIG[t].mint).join(",");
+  try {
+    const res = await fetch(
+      `https://lite-api.jup.ag/price/v2?ids=${encodeURIComponent(mints)}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) throw new Error(`Price API ${res.status}`);
+    const json = await res.json() as { data: Record<string, { price: number }> };
+    const prices: Partial<Record<Token, number>> = {};
+    for (const token of tokens) {
+      const mint = TOKEN_CONFIG[token].mint;
+      prices[token] = json.data[mint]?.price ?? 0;
+    }
+    return prices as Record<Token, number>;
+  } catch {
+    // Return zeros silently — balance amounts still show even without prices
+    return Object.fromEntries(tokens.map((t) => [t, 0])) as Record<Token, number>;
+  }
+}
+
 export default function DashboardPage() {
   const { wallet, account, connected } = useWalletContext();
   const [balances, setBalances] = useState<TokenBalance[]>(
     ALL_TOKENS.map((t) => ({ token: t, balanceRaw: 0n, state: "none", withdrawing: false }))
+  );
+  const [tokenPrices, setTokenPrices] = useState<Record<Token, number>>(
+    Object.fromEntries(ALL_TOKENS.map((t) => [t, 0])) as Record<Token, number>
   );
   const [pendingUtxoCount, setPendingUtxoCount] = useState(0);
   const [pendingUtxoSol, setPendingUtxoSol] = useState(0n);
@@ -104,6 +130,17 @@ export default function DashboardPage() {
       }
       setPendingUtxoCount(utxos.length);
       setPendingUtxoSol(utxos.reduce((s, u) => s + BigInt(u.amount.toString()), 0n));
+
+      // Fetch live USD prices for tokens that have a balance
+      const tokensWithBalance = ALL_TOKENS.filter((t) => {
+        const mint = TOKEN_CONFIG[t].mint as Address;
+        const r = balMap.get(mint);
+        return r?.state === "shared" && BigInt(r.balance.toString()) > 0n;
+      });
+      if (tokensWithBalance.length > 0) {
+        fetchTokenPrices(tokensWithBalance).then(setTokenPrices);
+      }
+
       setStatus("");
     } catch (e) {
       setError(`Refresh failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -218,6 +255,19 @@ export default function DashboardPage() {
   const hasAnyBalance = withdrawableBalances.length > 0 || pendingUtxoCount > 0;
   const SPARK = [20, 24, 22, 30, 28, 35, 33, 42, 40, 48, 52, 49, 58, 62, 60, 68];
 
+  // Compute total USD value from balances × live prices
+  const totalUsd = balances.reduce((sum, b) => {
+    if (b.balanceRaw === 0n) return sum;
+    const human = Number(b.balanceRaw) / 10 ** TOKEN_CONFIG[b.token].decimals;
+    return sum + human * (tokenPrices[b.token] ?? 0);
+  }, 0);
+  const hasPrices = Object.values(tokenPrices).some((p) => p > 0);
+  const usdDisplay = !hasAnyBalance
+    ? "$0"
+    : !hasPrices
+    ? "$—"
+    : `$${totalUsd < 0.01 ? totalUsd.toFixed(4) : totalUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
   return (
     <AppShell active="dashboard">
       <section className="app-head">
@@ -286,7 +336,7 @@ export default function DashboardPage() {
                     <div>
                       <div className="stat-label">Encrypted balance</div>
                       <div className="stat-value" style={{ fontSize: 48, marginTop: 4 }}>
-                        <em>$</em><span>{hasAnyBalance ? "—" : "0"}</span>
+                        <em>{usdDisplay}</em>
                       </div>
                       <div className="stat-delta up"><ArrowUp size={11} /> Shielded</div>
                     </div>
