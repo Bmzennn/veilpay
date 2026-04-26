@@ -158,17 +158,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Too many requests." }, { status: 429 });
   }
 
+  // New format: x402 <depositTxSig>:<invoiceId>
+  // Direct confidential deposit — no proof tx needed.
   const tokenParts = authHeader.substring(5).split(":");
-  if (tokenParts.length !== 3) {
-    return NextResponse.json({ error: "Invalid x402 authorization format." }, { status: 400 });
+  if (tokenParts.length !== 2) {
+    return NextResponse.json({ error: "Invalid x402 format. Expected: x402 <depositTxSig>:<invoiceId>" }, { status: 400 });
   }
 
-  const [proofTxSig, depositTxSig, invoiceIdHex] = tokenParts;
+  const [depositTxSig, invoiceIdHex] = tokenParts;
 
   const sigRegex = /^[1-9A-HJ-NP-Za-km-z]{32,88}$/;
   const hexRegex = /^[0-9a-fA-F]{64}$/;
 
-  if (!sigRegex.test(proofTxSig) || !sigRegex.test(depositTxSig) || !hexRegex.test(invoiceIdHex)) {
+  if (!sigRegex.test(depositTxSig) || !hexRegex.test(invoiceIdHex)) {
     return NextResponse.json({ error: "Invalid payment proof format." }, { status: 400 });
   }
 
@@ -182,11 +184,8 @@ export async function GET(req: NextRequest) {
 
     const isValid = await verifyX402Deposit({
       connection,
-      proofTxSignature: proofTxSig,
       depositTxSignature: depositTxSig,
-      serverPrivateKeyBase58: SERVER_PRIVATE_KEY_BASE58,
       serverSolanaAddress: SERVER_SOLANA_ADDRESS,
-      expectedAmountRaw: EXPECTED_AMOUNT_RAW,
       expectedInvoiceId,
     });
 
@@ -200,9 +199,10 @@ export async function GET(req: NextRequest) {
         message: "Welcome to the premium club!",
         secretData: "The AI agent has successfully navigated the ZK shielding pool.",
         paymentReceipt: {
-          depositTx: depositTxSig,
+          depositTx:  depositTxSig,
+          invoiceId:  invoiceIdHex,
           amountPaid: INVOICE_AMOUNT_SOL,
-          token: "SOL",
+          token:      "SOL",
         },
       },
     });
