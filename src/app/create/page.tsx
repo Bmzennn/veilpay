@@ -367,6 +367,7 @@ export default function CreatePage() {
   const [generatedUrl, setGeneratedUrl] = useState("");
   const [meta, setMeta] = useState<PaymentLinkMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progressStep, setProgressStep] = useState(1); // 1–5 for link flow
 
   // Confidential state
   const [confStep, setConfStep] = useState<ConfidentialStep>("input");
@@ -374,6 +375,7 @@ export default function CreatePage() {
   const [confAmount, setConfAmount] = useState("");
   const [confToken, setConfToken] = useState<Token>("SOL");
   const [confStatusMsg, setConfStatusMsg] = useState("");
+  const [confProgressStep, setConfProgressStep] = useState(1); // 1–3 for conf flow
   const [confTxSig, setConfTxSig] = useState("");
   const [confError, setConfError] = useState<string | null>(null);
 
@@ -391,6 +393,7 @@ export default function CreatePage() {
     if (!wallet || !account) return;
     setError(null);
     setStep("funding");
+    setProgressStep(1);
     try {
       const result = await createPaymentLink({
         senderWallet: wallet,
@@ -399,6 +402,13 @@ export default function CreatePage() {
         token,
         onStatusChange: (msg) => {
           setStatusMsg(msg);
+          // Map status messages → fine-grained step number (1–5)
+          if (msg.includes("keypair") || msg.includes("Generating")) setProgressStep(1);
+          else if (msg.includes("Funding")) setProgressStep(2);
+          else if (msg.includes("Registering privacy") || msg.includes("Registering ephemeral")) setProgressStep(3);
+          else if (msg.includes("sender") || msg.includes("first time")) setProgressStep(4);
+          else if (msg.includes("Depositing") || msg.includes("shielded") || msg.includes("Shielding")) setProgressStep(5);
+          // Also drive coarse step for backward compat
           if (msg.includes("Registering") || msg.includes("Setting up")) setStep("registering");
           if (msg.includes("Depositing") || msg.includes("Shielding") || msg.includes("shielded")) setStep("creating");
         },
@@ -418,6 +428,7 @@ export default function CreatePage() {
     if (!wallet || !account) return;
     setConfError(null);
     setConfStep("sending");
+    setConfProgressStep(1);
     try {
       const result = await confidentialTransfer({
         senderWallet: wallet,
@@ -425,7 +436,12 @@ export default function CreatePage() {
         recipientAddress: confRecipient,
         amountHuman: confAmount,
         token: confToken,
-        onStatusChange: setConfStatusMsg,
+        onStatusChange: (msg) => {
+          setConfStatusMsg(msg);
+          if (msg.includes("Connecting") || msg.includes("Verifying")) setConfProgressStep(1);
+          else if (msg.includes("Encrypting") || msg.includes("Encryption")) setConfProgressStep(2);
+          else if (msg.includes("Sending") || msg.includes("sent")) setConfProgressStep(3);
+        },
       });
       setConfTxSig(result.signature);
       setConfStep("done");
@@ -435,11 +451,19 @@ export default function CreatePage() {
     }
   };
 
-  const PROCESSING_LABEL: Record<string, string> = {
-    funding: "Preparing privacy channel",
-    registering: "Setting up ephemeral key",
-    creating: "Shielding your funds",
-  };
+  const LINK_STEPS = [
+    { label: "Generate keys",          hint: "Creating one-time ephemeral keypair" },
+    { label: "Fund channel",           hint: "Wallet request 1 — SOL transfer to ephemeral" },
+    { label: "Privacy channel setup",  hint: "Registering ephemeral with Umbra protocol" },
+    { label: "Account registration",   hint: "Wallet requests 2–4 — first time only" },
+    { label: "Deposit to pool",        hint: "Wallet request 5 — creating private UTXO" },
+  ];
+
+  const CONF_STEPS = [
+    { label: "Connecting",   hint: "Initialising Umbra client" },
+    { label: "Verifying",    hint: "Checking recipient VeilPay account" },
+    { label: "Encrypting",   hint: "Sending via Arcium MPC" },
+  ];
 
   return (
     <AppShell active="create">
@@ -483,16 +507,48 @@ export default function CreatePage() {
                     </button>
                   </div>
                 ) : isProcessing ? (
-                  <div style={{ textAlign: "center", padding: "40px 0" }}>
+                  <div style={{ textAlign: "center", padding: "32px 0 20px" }}>
+                    {/* Logo */}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 100, height: 100, objectFit: "contain", margin: "0 auto 20px", display: "block" }} />
-                    <p style={{ fontWeight: 600, fontSize: 22, marginBottom: 8, letterSpacing: "-0.02em" }}>{PROCESSING_LABEL[step]}</p>
-                    <p style={{ color: "var(--ink-3)", fontSize: 13 }}>{statusMsg}</p>
-                    <div style={{ display: "flex", gap: 6, justifyContent: "center", marginTop: 20 }}>
-                      {[0, 1, 2].map((i) => (
-                        <span key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--vp-sky)", opacity: 0.6, animation: `blink 1.2s ease-in-out ${i * 0.2}s infinite` }} />
-                      ))}
+                    <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 72, height: 72, objectFit: "contain", margin: "0 auto 20px", display: "block" }} />
+
+                    {/* Step label + fraction */}
+                    <p style={{ fontWeight: 600, fontSize: 18, margin: "0 0 4px", letterSpacing: "-0.02em" }}>
+                      {LINK_STEPS[progressStep - 1]?.label}
+                    </p>
+                    <p style={{ fontSize: 12, color: "var(--vp-sky-deep)", fontFamily: "var(--font-mono)", fontWeight: 600, margin: "0 0 18px", letterSpacing: "0.04em" }}>
+                      {progressStep} / {LINK_STEPS.length}
+                    </p>
+
+                    {/* Segmented progress bar */}
+                    <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+                      {LINK_STEPS.map((_, i) => {
+                        const s = i + 1;
+                        const done = s < progressStep;
+                        const active = s === progressStep;
+                        return (
+                          <div key={s} style={{
+                            flex: 1, height: 5, borderRadius: 3,
+                            background: done
+                              ? "linear-gradient(90deg,var(--vp-sky-deep),var(--vp-sky-2))"
+                              : active
+                              ? "var(--vp-sky)"
+                              : "var(--hairline-strong)",
+                            opacity: done ? 1 : active ? 1 : 0.3,
+                            animation: active ? "stepPulse 1.6s ease-in-out infinite" : "none",
+                            transition: "background 0.4s",
+                          }} />
+                        );
+                      })}
                     </div>
+
+                    {/* Hint + status */}
+                    <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "0 0 4px" }}>
+                      {LINK_STEPS[progressStep - 1]?.hint}
+                    </p>
+                    <p style={{ fontSize: 12, color: "var(--ink-4)", margin: 0, fontFamily: "var(--font-mono)" }}>
+                      {statusMsg}
+                    </p>
                   </div>
                 ) : (
                   <>
@@ -620,16 +676,42 @@ export default function CreatePage() {
                     </button>
                   </div>
                 ) : confStep === "sending" ? (
-                  <div style={{ textAlign: "center", padding: "40px 0" }}>
+                  <div style={{ textAlign: "center", padding: "32px 0 20px" }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 100, height: 100, objectFit: "contain", margin: "0 auto 20px", display: "block" }} />
-                    <p style={{ fontWeight: 600, fontSize: 22, marginBottom: 8, letterSpacing: "-0.02em" }}>Encrypting transfer</p>
-                    <p style={{ color: "var(--ink-3)", fontSize: 15 }}>{confStatusMsg || "Processing via Arcium MPC…"}</p>
-                    <div style={{ display: "flex", gap: 6, justifyContent: "center", marginTop: 20 }}>
-                      {[0, 1, 2].map((i) => (
-                        <span key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--vp-violet)", opacity: 0.6, animation: `blink 1.2s ease-in-out ${i * 0.2}s infinite` }} />
-                      ))}
+                    <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 72, height: 72, objectFit: "contain", margin: "0 auto 20px", display: "block" }} />
+
+                    <p style={{ fontWeight: 600, fontSize: 18, margin: "0 0 4px", letterSpacing: "-0.02em" }}>
+                      {CONF_STEPS[confProgressStep - 1]?.label}
+                    </p>
+                    <p style={{ fontSize: 12, color: "var(--vp-violet)", fontFamily: "var(--font-mono)", fontWeight: 600, margin: "0 0 18px", letterSpacing: "0.04em" }}>
+                      {confProgressStep} / {CONF_STEPS.length}
+                    </p>
+
+                    <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+                      {CONF_STEPS.map((_, i) => {
+                        const s = i + 1;
+                        const done = s < confProgressStep;
+                        const active = s === confProgressStep;
+                        return (
+                          <div key={s} style={{
+                            flex: 1, height: 5, borderRadius: 3,
+                            background: done
+                              ? "linear-gradient(90deg,#6b7cff,#9b86ff)"
+                              : active ? "var(--vp-violet)" : "var(--hairline-strong)",
+                            opacity: done ? 1 : active ? 1 : 0.3,
+                            animation: active ? "stepPulse 1.6s ease-in-out infinite" : "none",
+                            transition: "background 0.4s",
+                          }} />
+                        );
+                      })}
                     </div>
+
+                    <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "0 0 4px" }}>
+                      {CONF_STEPS[confProgressStep - 1]?.hint}
+                    </p>
+                    <p style={{ fontSize: 12, color: "var(--ink-4)", margin: 0, fontFamily: "var(--font-mono)" }}>
+                      {confStatusMsg || "Processing via Arcium MPC…"}
+                    </p>
                   </div>
                 ) : (
                   <>

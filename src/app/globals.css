@@ -357,6 +357,7 @@ footer { padding:48px 0 32px;border-top:1px solid var(--hairline);margin-top:32p
 
 /* ─── Utility animations ─── */
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes stepPulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
 
 /* ─── Reveal on scroll ─── */
 .reveal { opacity:0;transform:translateY(24px);transition:opacity 0.7s ease,transform 0.7s ease; }
