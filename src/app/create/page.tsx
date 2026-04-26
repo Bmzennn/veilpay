@@ -735,9 +735,7 @@ export default function CreatePage() {
                     <div style={{ padding: "10px 14px", borderRadius: "var(--radius-sm)", background: "rgba(245,158,11,0.06)", border: "0.5px solid rgba(245,158,11,0.2)", marginBottom: 20, display: "flex", gap: 10, alignItems: "start" }}>
                       <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚠️</span>
                       <p style={{ fontSize: 12, color: "var(--ink-3)", margin: 0, lineHeight: 1.6 }}>
-                        <strong style={{ color: "var(--ink-2)" }}>Phantom simulation warning expected.</strong>{" "}
-                        Your wallet will show &ldquo;This transaction could not be simulated&rdquo; — this is normal for ZK-based MPC transactions.
-                        The transfer succeeds regardless. Click <strong style={{ color: "var(--ink-2)" }}>Proceed Anyway</strong> to continue.
+                        Phantom may show a simulation warning for ZK/MPC transactions because they rely on execution conditions that simulation cannot reproduce. If you trust VeilPay, proceed anyway.
                       </p>
                     </div>
 
