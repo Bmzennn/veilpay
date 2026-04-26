@@ -442,91 +442,112 @@ class RedisReplayStore implements ReplayStore {
             </div>
 
             {/* ─── VeilPay Skill ─────────────────────────────────────────────── */}
-            <H2 id="skill">VeilPay Skill (AI Agent)</H2>
+            <H2 id="skill">VeilPay Agent Skill</H2>
             <P>
-              The VeilPay skill is an AI agent integration for Claude (via the Claude Code CLI or claude.ai) that allows AI agents to initiate and verify private x402 payments directly from conversation context. Install it once, then any Claude session can autonomously pay for API access or issue payment requests.
+              The VeilPay agent skill lets any AI agent make and receive private payments on Solana — fully autonomously, with no browser or wallet popup. The agent signs transactions directly with its own keypair. All operations run in Node.js, including ZK proof generation.
             </P>
 
-            <H3>Installation</H3>
-            <CodeBlock lang="bash" code={`# Install via Claude Code CLI
-claude skill install veilpay
+            <H3>Install</H3>
+            <CodeBlock lang="bash" code={`npx skills add Bmzennn/agent-skills@veilpay`} />
 
-# Or add to your project's .claude/skills.json
-{
-  "skills": [
-    {
-      "name": "veilpay",
-      "source": "https://skills.veilpay.xyz/veilpay-skill.json"
-    }
-  ]
-}`} />
-
-            <H3>What it does</H3>
-            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-              {[
-                "Initiates Umbra stealth deposits from a connected wallet to pay for x402-protected APIs.",
-                "Verifies incoming x402 payment headers on behalf of your server.",
-                "Generates invoice IDs and monitors the Solana mempool for corresponding deposits.",
-                "Works with any x402-compatible API — not just VeilPay-hosted services.",
-                "Supports SOL, USDC, USDT, BONK, JUP, and WIF as payment tokens.",
-              ].map((s, i) => (
-                <li key={i} className="flex gap-2"><span className="text-[#00b3ff] shrink-0">•</span>{s}</li>
-              ))}
-            </ul>
-
-            <H3>Trigger words</H3>
-            <P>The skill activates on any of these phrases in your Claude conversation:</P>
-            <div className="grid grid-cols-2 gap-2 my-4">
-              {[
-                "pay privately",
-                "send private payment",
-                "veil payment",
-                "x402 pay",
-                "pay with veilpay",
-                "umbra payment",
-                "private x402",
-                "stealth payment",
-              ].map((t) => (
-                <div key={t} className="bg-black/[0.04] border border-black/[0.07] rounded-lg px-3 py-2">
-                  <IC>{t}</IC>
-                </div>
-              ))}
+            <H3>Capabilities</H3>
+            <div style={{ overflowX: "auto", margin: "16px 0" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--hairline-strong)" }}>
+                    {["Script", "What it does"].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "8px 12px", color: "var(--ink-3)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ["wallet.cjs create", "Generate a persistent agent Solana keypair"],
+                    ["create-link.cjs", "Deposit to pool, return a shareable claim URL"],
+                    ["claim-link.cjs", "Paste a link → funds arrive in the agent's wallet"],
+                    ["check-link.cjs", "pending / claimed / delivered / not_found"],
+                    ["balance.cjs", "Query encrypted shielded balance"],
+                  ].map(([script, desc]) => (
+                    <tr key={script} style={{ borderBottom: "1px solid var(--hairline)" }}>
+                      <td style={{ padding: "10px 12px", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--vp-sky-deep)" }}>{script}</td>
+                      <td style={{ padding: "10px 12px", color: "var(--ink-2)" }}>{desc}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
-            <H3>Example — paying for a premium API</H3>
-            <CodeBlock lang="text" code={`You: Pay privately for the market-data API at https://api.example.com/premium
+            <H3>1. Agent setup</H3>
+            <CodeBlock lang="bash" code={`# Create a persistent agent wallet (saved to ~/.veilpay/wallet.json)
+node scripts/wallet.cjs create
 
-Claude (VeilPay skill):
-1. Fetching invoice from https://api.example.com/premium...
-   → Invoice: 0.1 SOL to 3uv92PZpiUu... (invoiceId: a3f9...)
-2. Creating Umbra stealth deposit...
-   → proofTx: 5Kj9..., depositTx: 8Nm2...
-3. Sending authorized request...
-   → 200 OK
+# Fund it with SOL for fees (devnet)
+node scripts/wallet.cjs airdrop
 
-Result: { "data": "premium market data", "timestamp": "..." }`} />
+# Check balance
+node scripts/wallet.cjs balance`} />
 
-            <H3>Example — verifying an incoming payment</H3>
-            <CodeBlock lang="text" code={`You: Verify the x402 payment in this header:
-  Authorization: x402 5Kj9...:8Nm2...:a3f9...
+            <H3>2. Create a private payment link</H3>
+            <P>The agent generates an ephemeral keypair, funds it, runs two ZK registration proofs, deposits funds into the Umbra pool, and returns a claim URL — all without any user interaction.</P>
+            <CodeBlock lang="bash" code={`node scripts/create-link.cjs \\
+  --amount 1.5 \\
+  --token SOL \\
+  --network devnet \\
+  --memo "Payment for task #42"`} />
+            <CodeBlock lang="text" code={`[1/4] Generating ephemeral keypair…
+[2/4] Funding ephemeral for registration fees…
+[3/4] Registering privacy channels (ZK proofs)…
+[4/4] Depositing into shielded pool…
 
-Claude (VeilPay skill):
-→ Fetching proof transaction 5Kj9...
-→ Fetching deposit transaction 8Nm2...
-→ Decoding AES payload via ECDH shared secret...
-→ Amount: 0.1 SOL ✓
-→ Destination: 3uv92... ✓
-→ Invoice ID: a3f9... ✓
-→ No replay detected ✓
+✅ Private link created!
+   Link:    https://www.veilpayments.xyz/claim?lid=...#<secret>:SOL:Payment%20for%20task%20%2342
+   Amount:  1.5 SOL
+   Expires: 2026-05-03`} />
+            <Note>Link creation requires ~0.02 SOL extra for the ephemeral registration buffer. This SOL is recovered by the recipient when they claim.</Note>
 
-Result: Payment valid. Access granted.`} />
+            <H3>3. Claim a payment link</H3>
+            <P>An agent that receives a VeilPay link can claim it directly to its own wallet — no browser, no human approval. The full Groth16 ZK proof is generated locally in Node.js.</P>
+            <CodeBlock lang="bash" code={`node scripts/claim-link.cjs \\
+  --link "https://www.veilpayments.xyz/claim?lid=...#<secret>:SOL" \\
+  --network devnet`} />
+            <CodeBlock lang="text" code={`[1/5] Scanning shielded pool…
+      Found: 1.5 SOL
+[2/5] Generating ZK proof (this takes 20–60s)…
+      Downloading claimreceiverclaimableutxo.zkey (cached after first run)… done
+[3/5] Waiting for on-chain ZK verification…
+      Verified ✓
+[4/5] Preparing token account…
+[5/5] Withdrawing to your wallet…
 
-            <H3>Configuration</H3>
-            <CodeBlock lang="bash" code={`# Required environment variables for the skill
-VEILPAY_NETWORK=mainnet                    # mainnet or devnet
-VEILPAY_RPC_URL=https://your-rpc.com
-X402_SERVER_PRIVATE_KEY=<base58_key>       # Server's Solana keypair
-NEXT_PUBLIC_X402_SERVER_ADDRESS=<pubkey>   # Server's public address`} />
+✅ Claimed successfully!
+   Amount:    1.5 SOL
+   Delivered: 7xKt...9mPq`} />
+            <Note>ZK circuit files (~100MB) are downloaded on first claim and cached in <IC>~/.veilpay/zk-cache/</IC>. Subsequent claims use the cache and take seconds less.</Note>
+
+            <H3>4. Check link status</H3>
+            <CodeBlock lang="bash" code={`node scripts/check-link.cjs \\
+  --link "https://www.veilpayments.xyz/claim?lid=...#<secret>:SOL"`} />
+            <CodeBlock lang="text" code={`Status: pending     # funds in pool, not yet claimed
+Status: claimed     # ZK proof accepted, sweep in progress
+Status: delivered   # funds in recipient's wallet
+Status: not_found   # expired or already swept`} />
+
+            <H3>5. Check encrypted balance</H3>
+            <P>If the agent received a confidential transfer (direct send), the balance waits in its encrypted Umbra account:</P>
+            <CodeBlock lang="bash" code={`node scripts/balance.cjs --network devnet`} />
+            <CodeBlock lang="text" code={`Encrypted balances for 7xKt...9mPq on devnet:
+  USDC   42.00  ← withdraw with: node withdraw.cjs --token USDC`} />
+
+            <H3>Environment variables</H3>
+            <CodeBlock lang="bash" code={`VEILPAY_NETWORK=devnet           # devnet or mainnet
+VEILPAY_RPC_URL=https://...      # optional custom RPC
+VEILPAY_WALLET_PATH=~/.veilpay/wallet.json`} />
+
+            <H3>How it works — no browser required</H3>
+            <P>
+              The browser version of VeilPay uses Phantom to sign transactions because browsers cannot safely hold raw private keys. An agent has no such constraint — it loads its keypair from <IC>~/.veilpay/wallet.json</IC> and uses <IC>createSignerFromPrivateKeyBytes</IC> from the Umbra SDK directly. The ZK prover (<IC>@umbra-privacy/web-zk-prover</IC>) runs in Node.js with circuit files stored locally, producing identical proofs to the browser version.
+            </P>
+            <Warn>The agent wallet private key is stored unencrypted at <IC>~/.veilpay/wallet.json</IC>. Restrict file permissions (<IC>chmod 600</IC>) and never commit it to version control.</Warn>
 
             {/* ─── Security Model ─────────────────────────────────────────────── */}
             <H2 id="security">Security Model</H2>
