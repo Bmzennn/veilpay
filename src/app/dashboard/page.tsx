@@ -62,49 +62,22 @@ function Sparkline({ points }: { points: number[] }) {
 }
 
 // ─── Token price fetcher ──────────────────────────────────────────────────────
-// Uses CoinGecko IDs (not mint addresses) so devnet and mainnet both work.
-// Stablecoins are hardcoded at $1 — they don't need an API call.
-
-const COINGECKO_IDS: Partial<Record<Token, string>> = {
-  SOL:  "solana",
-  BONK: "bonk",
-  JUP:  "jupiter-exchange-solana",
-  WIF:  "dogwifcoin",
-};
-const STABLE_USD: Partial<Record<Token, number>> = {
-  USDC: 1.00,
-  USDT: 1.00,
-};
+// Calls our own /api/prices route (server-side proxy) to avoid browser CORS
+// restrictions on CoinGecko's free tier. Network-agnostic: uses token symbols
+// not mint addresses, so devnet and mainnet both work correctly.
 
 async function fetchTokenPrices(tokens: Token[]): Promise<Record<Token, number>> {
-  const prices: Partial<Record<Token, number>> = {};
-
-  // Stablecoins: hardcode $1 — no API call needed, works on any network
-  for (const token of tokens) {
-    if (STABLE_USD[token] !== undefined) prices[token] = STABLE_USD[token]!;
-  }
-
-  // Non-stablecoins: fetch from CoinGecko using stable coin IDs (network-agnostic)
-  const toFetch = tokens.filter((t) => COINGECKO_IDS[t]);
-  if (toFetch.length === 0) return { ...Object.fromEntries(tokens.map((t) => [t, 0])), ...prices } as Record<Token, number>;
-
-  const ids = toFetch.map((t) => COINGECKO_IDS[t]!).join(",");
   try {
-    const res = await fetch(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`,
-      { signal: AbortSignal.timeout(8000) }
-    );
-    if (!res.ok) throw new Error(`CoinGecko ${res.status}`);
-    const json = await res.json() as Record<string, { usd: number }>;
-    for (const token of toFetch) {
-      const id = COINGECKO_IDS[token]!;
-      prices[token] = json[id]?.usd ?? 0;
-    }
+    const res = await fetch(`/api/prices?tokens=${tokens.join(",")}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new Error(`Prices ${res.status}`);
+    const json = await res.json() as Record<string, number>;
+    // Fill zeros for any token not returned
+    return Object.fromEntries(tokens.map((t) => [t, json[t] ?? 0])) as Record<Token, number>;
   } catch {
-    for (const token of toFetch) prices[token] = 0;
+    return Object.fromEntries(tokens.map((t) => [t, 0])) as Record<Token, number>;
   }
-
-  return { ...Object.fromEntries(tokens.map((t) => [t, 0])), ...prices } as Record<Token, number>;
 }
 
 export default function DashboardPage() {
@@ -153,17 +126,6 @@ export default function DashboardPage() {
       }
       setPendingUtxoCount(utxos.length);
       setPendingUtxoSol(utxos.reduce((s, u) => s + BigInt(u.amount.toString()), 0n));
-
-      // Fetch live USD prices for tokens that have a balance
-      const tokensWithBalance = ALL_TOKENS.filter((t) => {
-        const mint = TOKEN_CONFIG[t].mint as Address;
-        const r = balMap.get(mint);
-        return r?.state === "shared" && BigInt(r.balance.toString()) > 0n;
-      });
-      if (tokensWithBalance.length > 0) {
-        fetchTokenPrices(tokensWithBalance).then(setTokenPrices);
-      }
-
       setStatus("");
     } catch (e) {
       setError(`Refresh failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -173,6 +135,15 @@ export default function DashboardPage() {
   }, [wallet, account, connected]);
 
   useEffect(() => { if (connected) refresh(); }, [connected, refresh]);
+
+  // Fetch prices whenever balances change — runs AFTER setBalances resolves
+  useEffect(() => {
+    const tokensWithBalance = balances
+      .filter((b) => b.balanceRaw > 0n)
+      .map((b) => b.token);
+    if (tokensWithBalance.length === 0) return;
+    fetchTokenPrices(tokensWithBalance).then(setTokenPrices);
+  }, [balances]);
 
   const withdraw = async (token: Token) => {
     if (!connected || !wallet || !account) return;

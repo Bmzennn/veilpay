@@ -41,7 +41,6 @@ const securityHeaders = [
         "https://*.quicknode.com",
         "https://*.alchemy.com",
         "https://solscan.io",
-        "https://api.coingecko.com", // CoinGecko price API for USD balance display
       ].join(" "),
       "worker-src 'self' blob:",
       "frame-ancestors 'none'",
