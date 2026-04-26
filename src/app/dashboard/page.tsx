@@ -215,12 +215,13 @@ export default function DashboardPage() {
         { client },
         { fetchBatchMerkleProof: client.fetchBatchMerkleProof!, zkProver: claimProver, relayer }
       );
-      const BATCH = 5;
-      for (let i = 0; i < utxos.length; i += BATCH) {
-        const batch = utxos.slice(i, i + BATCH);
-        setStatus(`Processing batch ${Math.floor(i / BATCH) + 1} of ${Math.ceil(utxos.length / BATCH)}…`);
+      // Claim one UTXO at a time — each gets its own independent Arcium MPC
+      // computation. Batching multiple UTXOs together risks a single failure
+      // stalling the entire group in mxe state.
+      for (let i = 0; i < utxos.length; i++) {
+        setStatus(`Claiming payment ${i + 1} of ${utxos.length}…`);
         try {
-          const result = await claim(batch);
+          const result = await claim([utxos[i]]);
           for (const [, b] of result.batches) {
             const final = await pollClaimUntilTerminal((rid) => relayer.pollClaimStatus(rid), b.requestId);
             if (final.status === "failed") {
