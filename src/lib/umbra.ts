@@ -1352,13 +1352,13 @@ async function debugLogRecentUtxos(ephemeralAddress: string, count = 10): Promis
     const start = latest >= BigInt(count) ? latest - BigInt(count) + 1n : 0n;
     const res = await readClient.getUtxoData({ start, end: latest, limit: BigInt(count) });
     console.log(
-      `[indexer-debug] last ${res.items.size} UTXOs ` +
+      `[indexer-debug] last ${res.items.length} UTXOs ` +
       `(for ephemeral ${ephemeralAddress.slice(0, 8)}…):`
     );
-    for (const [, u] of Array.from(res.items.entries())) {
+    for (const u of res.items) {
       console.log(
-        `  abs=${u.absoluteIndex} tree=${u.treeIndex} ins=${u.insertionIndex}` +
-        ` slot=${u.slot} depositor_x25519=${u.depositorX25519PublicKey.slice(0, 16)}…`
+        `  abs=${u.absolute_index} tree=${u.tree_index} ins=${u.insertion_index}` +
+        ` slot=${u.slot} depositor_x25519=${u.depositor_x25519_public_key.slice(0, 16)}…`
       );
     }
   } catch (e) {
