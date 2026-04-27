@@ -1,5 +1,4 @@
 import { Connection, PublicKey } from "@solana/web3.js";
-import { log } from "./logger";
 import { getSupabaseServiceClient } from "./supabase";
 import { NETWORK } from "./constants";
 
@@ -13,25 +12,27 @@ const UMBRA_PROGRAM_ID = new PublicKey(
 );
 
 /**
- * Verify an x402 payment made via direct confidential deposit.
+ * Verify an x402 payment made via receiver-claimable UTXO (shielded deposit).
  *
- * The new flow uses getPublicBalanceToEncryptedBalanceDirectDepositorFunction
- * (same as a regular confidential transfer) instead of receiver-claimable UTXOs.
- * This means:
- *  - No UTXO claiming step → no Arcium mxe state dependency
- *  - Balance lands directly in server's encrypted account as "shared" mode
- *  - Simpler verification: confirm the tx is a valid Umbra deposit, check invoiceId
+ * The UTXO approach provides full payer-server unlinkability: the server's Solana
+ * address does NOT appear in the transaction accounts. The destination is encrypted
+ * on-chain using the server's X25519 public key — only the server can scan and claim
+ * the UTXO from the Umbra shielded pool.
  *
- * Amount verification is omitted because confidential deposits encrypt the amount
- * on-chain. Security is maintained by the one-use invoiceId (replay prevention)
- * and the server controlling what invoiceId it issues per request.
+ * Authorization header format: x402 <proofAccountSig>:<utxoSig>:<invoiceId>
+ * We verify utxoSig (the createUtxoSignature from CreateUtxoFromPublicBalanceResult).
  *
- * Authorization header format: x402 <depositTxSig>:<invoiceId>
+ * Security model:
+ * - invoiceId is 32-byte random, single-use, server-issued → only a payer who
+ *   received the invoice from this server can present a valid invoiceId.
+ * - UTXO creation proves the payer spent real Umbra-program fees.
+ * - Atomic invoice consumption (in the caller) prevents replay.
+ * - Supabase payments table provides cross-instance replay protection.
  */
 export interface VerifyX402DepositParams {
   connection: Connection;
-  depositTxSignature: string;
-  serverSolanaAddress: string;
+  depositTxSignature: string;    // createUtxoSignature from the UTXO creation
+  serverSolanaAddress: string;   // for replay record only (not checked in tx)
   expectedInvoiceId: Uint8Array; // 32 bytes
 }
 
@@ -54,14 +55,14 @@ export async function verifyX402Deposit(params: VerifyX402DepositParams): Promis
       }
     }
 
-    // ── Fetch and validate the deposit transaction ────────────────────────────
+    // ── Fetch and validate the UTXO creation transaction ─────────────────────
     const tx = await connection.getParsedTransaction(depositTxSignature, {
       maxSupportedTransactionVersion: 0,
       commitment: "confirmed",
     });
 
-    if (!tx) { console.error("[x402] Deposit transaction not found"); return false; }
-    if (tx.meta?.err) { console.error("[x402] Deposit transaction failed on-chain:", tx.meta.err); return false; }
+    if (!tx) { console.error("[x402] UTXO transaction not found"); return false; }
+    if (tx.meta?.err) { console.error("[x402] UTXO transaction failed on-chain:", tx.meta.err); return false; }
 
     // ── Confirm it's an Umbra program call ────────────────────────────────────
     const accountKeys = tx.transaction.message.accountKeys.map((k) => k.pubkey.toBase58());
@@ -70,15 +71,13 @@ export async function verifyX402Deposit(params: VerifyX402DepositParams): Promis
       return false;
     }
 
-    // ── Confirm the server's address is referenced in the transaction ─────────
-    // Direct deposits to the server's encrypted balance reference the server's
-    // address when deriving the encrypted token account PDA.
-    if (!accountKeys.includes(serverSolanaAddress)) {
-      console.error(`[x402] Server address ${serverSolanaAddress.slice(0, 8)} not found in tx accounts`);
-      return false;
-    }
+    // ── Note: server address NOT present in accounts — this is expected ───────
+    // For receiver-claimable UTXOs, the destination is encrypted using the
+    // server's X25519 public key. The server's Solana address does not appear
+    // in plaintext transaction accounts. This is exactly what provides
+    // payer-server unlinkability on-chain.
 
-    log(`[x402] ✅ Deposit tx confirmed — server ${serverSolanaAddress.slice(0, 8)}, sig ${depositTxSignature.slice(0, 12)}`);
+    console.log(`[x402] ✅ UTXO tx confirmed — sig ${depositTxSignature.slice(0, 12)}`);
 
     // ── Record to prevent replay ──────────────────────────────────────────────
     if (supabase) {

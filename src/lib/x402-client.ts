@@ -1,5 +1,4 @@
 import { Keypair, Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { log } from "./logger";
 import {
   getUmbraClient,
   createSignerFromPrivateKeyBytes,
@@ -185,12 +184,12 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
   const { agentPrivateKeyBase58, ...fetchOptions } = options;
 
   // 1. Initial request
-  log(`[x402Client] Fetching ${url}…`);
+  console.log(`[x402Client] Fetching ${url}…`);
   let response = await fetch(url, fetchOptions);
 
   if (response.status !== 402) return response;
 
-  log(`[x402Client] 402 Payment Required — extracting invoice…`);
+  console.log(`[x402Client] 402 Payment Required — extracting invoice…`);
 
   // 2. Parse invoice
   const responseBody = await response.json();
@@ -200,7 +199,7 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
     throw new Error("Invalid x402 invoice payload from server.");
   }
 
-  log(`[x402Client] Invoice: ${invoice.amount} ${invoice.token} → ${invoice.destination}`);
+  console.log(`[x402Client] Invoice: ${invoice.amount} ${invoice.token} → ${invoice.destination}`);
 
   // 3. Build Umbra client with agent keypair
   const b58 = (bs58 as { default?: typeof bs58 } & typeof bs58).default ?? bs58;
@@ -238,11 +237,11 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
     || !state.data.isUserAccountX25519KeyRegistered;
 
   if (needsReg) {
-    log(`[x402Client] Registering payer with Umbra (first time only)…`);
+    console.log(`[x402Client] Registering payer with Umbra (first time only)…`);
     const regProver  = getUserRegistrationProver({ assetProvider: makeNodeZkAssetProvider() });
     const register   = getUserRegistrationFunction({ client }, { zkProver: regProver });
     await register({ confidential: true, anonymous: true });
-    log(`[x402Client] Payer registered.`);
+    console.log(`[x402Client] Payer registered.`);
   }
 
   const tokenCfg = TOKEN_CONFIG[invoice.token as Token];
@@ -254,7 +253,7 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
   );
 
   // 5. Create receiver-claimable UTXO with invoiceId embedded in optionalData
-  log(`[x402Client] Computing ZK proof and creating shielded UTXO…`);
+  console.log(`[x402Client] Computing ZK proof and creating shielded UTXO…`);
 
   const assetProvider = makeNodeZkAssetProvider();
   const utxoProver    = getCreateReceiverClaimableUtxoFromPublicBalanceProver({ assetProvider });
@@ -276,16 +275,16 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
   const proofTxSig  = result.createProofAccountSignature.toString();
   const depositSig  = result.createUtxoSignature.toString();
 
-  log(`[x402Client] UTXO created — proofTx: ${proofTxSig.slice(0, 12)}, utxoTx: ${depositSig.slice(0, 12)}`);
+  console.log(`[x402Client] UTXO created — proofTx: ${proofTxSig.slice(0, 12)}, utxoTx: ${depositSig.slice(0, 12)}`);
 
   // 6. Retry with x402 Authorization header
-  log(`[x402Client] Retrying with proof of payment…`);
+  console.log(`[x402Client] Retrying with proof of payment…`);
 
   const retryHeaders = new Headers(fetchOptions.headers);
   retryHeaders.set("Authorization", `x402 ${proofTxSig}:${depositSig}:${invoice.invoiceId}`);
 
   response = await fetch(url, { ...fetchOptions, headers: retryHeaders });
 
-  log(`[x402Client] Server responded: ${response.status}`);
+  console.log(`[x402Client] Server responded: ${response.status}`);
   return response;
 }

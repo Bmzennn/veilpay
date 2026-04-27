@@ -12,8 +12,6 @@ if (!SERVER_PRIVATE_KEY_BASE58 || !SERVER_SOLANA_ADDRESS) {
 }
 
 const INVOICE_AMOUNT_SOL = 0.1;
-const SOL_DECIMALS = 9;
-const EXPECTED_AMOUNT_RAW = BigInt(Math.round(INVOICE_AMOUNT_SOL * 10 ** SOL_DECIMALS));
 const INVOICE_TTL_MS = 10 * 60 * 1000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 5;
@@ -39,8 +37,6 @@ async function issueInvoice(): Promise<{ invoiceId: Uint8Array; invoiceIdHex: st
       .insert({ id: invoiceIdHex, expires_at: expiresAt, consumed: false });
 
     if (error) {
-      // Supabase insert failed — most likely the x402_invoices table doesn't exist.
-      // Fall back to in-memory, but warn loudly: this breaks on serverless (cross-instance).
       console.error(
         "[x402] Supabase invoice insert failed:", error.message,
         "\n  ⚠️  Falling back to in-memory store — invoices WILL break across serverless instances.",
@@ -59,8 +55,6 @@ async function consumeInvoice(invoiceIdHex: string): Promise<boolean> {
   const client = getSupabaseServiceClient();
 
   if (client) {
-    // Atomic: mark consumed=true only if not already consumed and not expired.
-    // Returns the row if the update applied; empty if it was already consumed or expired.
     const { data, error } = await client
       .from("x402_invoices")
       .update({ consumed: true })
@@ -70,7 +64,6 @@ async function consumeInvoice(invoiceIdHex: string): Promise<boolean> {
       .select("id");
 
     if (error) {
-      // Table likely missing — check in-memory fallback before failing.
       console.error("[x402] Supabase consume failed:", error.message, "— checking in-memory fallback");
       const exp = _memInvoices.get(invoiceIdHex);
       if (!exp || Date.now() > exp) return false;
@@ -90,10 +83,6 @@ async function consumeInvoice(invoiceIdHex: string): Promise<boolean> {
 }
 
 // ─── Rate limiter (Supabase-backed) ──────────────────────────────────────────
-// Schema: ip TEXT, hit_at TIMESTAMPTZ
-// Counts rows in the sliding window; inserts one per request.
-// Fallback to in-memory Map for local dev.
-
 const _memRate = new Map<string, number[]>();
 
 async function checkRateLimit(ip: string): Promise<boolean> {
@@ -107,7 +96,7 @@ async function checkRateLimit(ip: string): Promise<boolean> {
       .eq("ip", ip)
       .gt("hit_at", windowStart);
 
-    if (error) return true; // fail open on DB error (don't block legit requests)
+    if (error) return true; // fail open on DB error
     if ((count ?? 0) >= RATE_MAX) return false;
 
     await client.from("x402_rate_limit").insert({ ip, hit_at: new Date().toISOString() });
@@ -134,7 +123,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse(
       JSON.stringify({
         error: "Payment Required",
-        message: "This is a premium endpoint. Please remit payment via Umbra Stealth Deposit.",
+        message: "This is a premium endpoint. Please remit payment via Umbra Shielded UTXO.",
         invoice: {
           amount: INVOICE_AMOUNT_SOL,
           token: "SOL",
@@ -158,19 +147,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Too many requests." }, { status: 429 });
   }
 
-  // New format: x402 <depositTxSig>:<invoiceId>
-  // Direct confidential deposit — no proof tx needed.
+  // Format: x402 <proofAccountSig>:<utxoSig>:<invoiceId>
+  // proofAccountSig = createProofAccountSignature (proof account buffer tx)
+  // utxoSig         = createUtxoSignature (actual UTXO creation tx)
+  // invoiceId       = 64-char hex, server-issued one-time token
   const tokenParts = authHeader.substring(5).split(":");
-  if (tokenParts.length !== 2) {
-    return NextResponse.json({ error: "Invalid x402 format. Expected: x402 <depositTxSig>:<invoiceId>" }, { status: 400 });
+  if (tokenParts.length !== 3) {
+    return NextResponse.json(
+      { error: "Invalid x402 format. Expected: x402 <proofAccountSig>:<utxoSig>:<invoiceId>" },
+      { status: 400 }
+    );
   }
 
-  const [depositTxSig, invoiceIdHex] = tokenParts;
+  const [proofTxSig, depositTxSig, invoiceIdHex] = tokenParts;
 
   const sigRegex = /^[1-9A-HJ-NP-Za-km-z]{32,88}$/;
   const hexRegex = /^[0-9a-fA-F]{64}$/;
 
-  if (!sigRegex.test(depositTxSig) || !hexRegex.test(invoiceIdHex)) {
+  if (!sigRegex.test(proofTxSig) || !sigRegex.test(depositTxSig) || !hexRegex.test(invoiceIdHex)) {
     return NextResponse.json({ error: "Invalid payment proof format." }, { status: 400 });
   }
 
@@ -199,6 +193,7 @@ export async function GET(req: NextRequest) {
         message: "Welcome to the premium club!",
         secretData: "The AI agent has successfully navigated the ZK shielding pool.",
         paymentReceipt: {
+          proofTx:    proofTxSig,
           depositTx:  depositTxSig,
           invoiceId:  invoiceIdHex,
           amountPaid: INVOICE_AMOUNT_SOL,

@@ -71,7 +71,6 @@ import {
 } from "./constants";
 import { fundEphemeral } from "./solana";
 import type { Token, PaymentLinkMeta } from "@/types";
-import { log, warn } from "./logger";
 
 // Derive U32 from the scanner function's parameter type (it is a branded bigint)
 export type U32 = Parameters<ClaimableUtxoScannerFunction>[0];
@@ -116,14 +115,14 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
         // Double check it's not a tiny error response that got cached
         const contentLength = cachedResponse.headers.get("content-length");
         if (!contentLength || parseInt(contentLength) > 1000) {
-            log(`[zkCache] Persistent hit: ${url.split('/').pop()}`);
+            console.log(`[zkCache] Persistent hit: ${url.split('/').pop()}`);
             const blob = await cachedResponse.blob();
             return URL.createObjectURL(blob);
         }
         await cache.delete(url); // Clean up bad entry
       }
 
-      log(`[zkCache] Cache miss (attempt ${attempt}), downloading: ${url.split('/').pop()}`);
+      console.log(`[zkCache] Cache miss (attempt ${attempt}), downloading: ${url.split('/').pop()}`);
       const proxyUrl = `/api/zk-proxy?url=${encodeURIComponent(url)}`;
       const response = await fetch(proxyUrl);
       
@@ -141,7 +140,7 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
       return URL.createObjectURL(blob);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      warn(`[zkCache] Download failed (attempt ${attempt}):`, message);
+      console.warn(`[zkCache] Download failed (attempt ${attempt}):`, message);
       if (attempt < 3) {
           await new Promise(r => setTimeout(r, 2000));
           return fetchWithCache(url, attempt + 1);
@@ -193,7 +192,7 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
  */
 export async function preloadCreateAssets() {
   if (typeof window === "undefined") return;
-  log("[zkCache] Proactive pre-load started for 'send' circuits...");
+  console.log("[zkCache] Proactive pre-load started for 'send' circuits...");
   try {
     const provider = getPersistentZkAssetProvider();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -201,9 +200,9 @@ export async function preloadCreateAssets() {
       provider.getAssetUrls("userregistration" as any),
       provider.getAssetUrls("receiverclaimableutxofrompublicbalance" as any)
     ]);
-    log("[zkCache] Proactive pre-load complete.");
+    console.log("[zkCache] Proactive pre-load complete.");
   } catch (e) {
-    warn("[zkCache] Proactive pre-load failed:", e);
+    console.warn("[zkCache] Proactive pre-load failed:", e);
   }
 }
 
@@ -214,14 +213,14 @@ export async function preloadCreateAssets() {
  */
 export async function preloadClaimAssets() {
   if (typeof window === "undefined") return;
-  log("[zkCache] Proactive pre-load started for 'claim' circuits...");
+  console.log("[zkCache] Proactive pre-load started for 'claim' circuits...");
   try {
     const provider = getPersistentZkAssetProvider();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await provider.getAssetUrls("claimreceiverclaimableutxointoencryptedbalance" as any);
-    log("[zkCache] Proactive pre-load complete.");
+    console.log("[zkCache] Proactive pre-load complete.");
   } catch (e) {
-    warn("[zkCache] Proactive pre-load failed (will retry on-demand):", e);
+    console.warn("[zkCache] Proactive pre-load failed (will retry on-demand):", e);
   }
 }
 
@@ -233,7 +232,7 @@ export async function clearZkCache() {
     if (typeof window === "undefined") return;
     try {
         await caches.delete(ZK_CACHE_NAME);
-        log("[zkCache] Local storage wiped.");
+        console.log("[zkCache] Local storage wiped.");
     } catch (e) {
         console.error("[zkCache] Failed to clear:", e);
     }
@@ -244,20 +243,20 @@ export function makeZkProverDeps() {
     assetProvider: getPersistentZkAssetProvider(),
     callbacks: {
       onZkeyDownload: {
-        pre: async () => log("[zkProver] preparing zkey…"),
-        post: async () => log("[zkProver] zkey ready"),
+        pre: async () => console.log("[zkProver] preparing zkey…"),
+        post: async () => console.log("[zkProver] zkey ready"),
       },
       onWasmDownload: {
-        pre: async () => log("[zkProver] preparing wasm…"),
-        post: async () => log("[zkProver] wasm ready"),
+        pre: async () => console.log("[zkProver] preparing wasm…"),
+        post: async () => console.log("[zkProver] wasm ready"),
       },
       onWitnessGeneration: {
-        pre: async () => log("[zkProver] generating witness…"),
-        post: async () => log("[zkProver] witness done"),
+        pre: async () => console.log("[zkProver] generating witness…"),
+        post: async () => console.log("[zkProver] witness done"),
       },
       onProofComputation: {
-        pre: async () => log("[zkProver] computing ZK proof (may take 10-30s)…"),
-        post: async () => log("[zkProver] proof done"),
+        pre: async () => console.log("[zkProver] computing ZK proof (may take 10-30s)…"),
+        post: async () => console.log("[zkProver] proof done"),
       },
     },
   };
@@ -294,6 +293,9 @@ function normalizeError(err: unknown): string {
     }
     if (msg.includes("relayer") || msg.includes("relay")) {
       return "Umbra relayer is unavailable. Please try again in a moment.";
+    }
+    if (msg.includes("unexpected response format") || msg.includes("rpc error")) {
+      return "Solana RPC is temporarily unavailable. Please try again in a moment.";
     }
     // Return the raw message if it looks user-safe (short, no stack traces)
     if (err.message.length < 120 && !err.message.includes("at ")) {
@@ -344,7 +346,7 @@ export function makeSkipPreflightForwarder() {
 
     // Diagnostic: log wire stats before sending
     const sigCount = Object.keys(tx.signatures).length;
-    log(
+    console.log(
       "[sendAndConfirm] wire stats — sigSlots:", sigCount,
       "msgBytes:", tx.messageBytes.length,
       "wireTotal:", wire.length,
@@ -367,12 +369,12 @@ export function makeSkipPreflightForwarder() {
           "\n  logs:", sim.value.logs?.join("\n  ") ?? "(none)"
         );
       } else {
-        log(
+        console.log(
           "[sendAndConfirm] ✅ simulation OK — units:", sim.value.unitsConsumed
         );
       }
     } catch (simErr) {
-      warn(
+      console.warn(
         "[sendAndConfirm] simulation threw (may be a format issue):",
         simErr instanceof Error ? simErr.message : String(simErr)
       );
@@ -399,7 +401,7 @@ export function makeSkipPreflightForwarder() {
     const sig = await trySend();
     if (!sig) throw new Error("Transaction send failed: no signature returned");
 
-    log(
+    console.log(
       "[sendAndConfirm] ✅ submitted sig:", sig,
       `\n  Solscan:  https://solscan.io/tx/${sig}${clusterQuery}`,
       `\n  Explorer: https://explorer.solana.com/tx/${sig}${clusterQuery}`
@@ -421,7 +423,7 @@ export function makeSkipPreflightForwarder() {
       pollCount++;
 
       if (status) {
-        log(
+        console.log(
           "[sendAndConfirm] poll", pollCount, "→ confirmationStatus:", status.confirmationStatus,
           status.err ? "| err: " + JSON.stringify(status.err) : ""
         );
@@ -434,17 +436,17 @@ export function makeSkipPreflightForwarder() {
           status.confirmationStatus === "confirmed" ||
           status.confirmationStatus === "finalized"
         ) {
-          log("[sendAndConfirm] confirmed after", pollCount, "polls");
+          console.log("[sendAndConfirm] confirmed after", pollCount, "polls");
           return sig;
         }
       } else if (pollCount <= 5 || pollCount % 10 === 0) {
-        log("[sendAndConfirm] poll", pollCount, "→ null (not yet seen by cluster)");
+        console.log("[sendAndConfirm] poll", pollCount, "→ null (not yet seen by cluster)");
       }
 
       // Rebroadcast if the tx hasn't landed yet and enough time has passed.
       if (Date.now() - lastResubmit >= RESUBMIT_MS) {
         lastResubmit = Date.now();
-        log("[sendAndConfirm] resubmitting (poll", pollCount, ")");
+        console.log("[sendAndConfirm] resubmitting (poll", pollCount, ")");
         trySend().catch(() => { /* ignore resubmit errors — keep polling */ });
       }
       await new Promise((r) => setTimeout(r, POLL_MS));
@@ -453,7 +455,7 @@ export function makeSkipPreflightForwarder() {
     // Final check with history search — catches the "confirmed but evicted from recent cache" case
     const historyCheck = await conn.getSignatureStatus(sig, { searchTransactionHistory: true });
     if (historyCheck.value && !historyCheck.value.err) {
-      log("[sendAndConfirm] found in history after timeout — treating as confirmed");
+      console.log("[sendAndConfirm] found in history after timeout — treating as confirmed");
       return sig;
     }
     if (historyCheck.value?.err) {
@@ -571,7 +573,7 @@ function appendSetComputeUnitPrice(msgBytes: Uint8Array, cuIdx: number, microLam
     offset += dlBr + dataLen;
   }
   const instrSectionEnd = offset;
-  log(
+  console.log(
     "[appendSetComputeUnitPrice] instrCount:", instrCount,
     "instrSectionEnd:", instrSectionEnd,
     "altSectionSize:", msgBytes.length - instrSectionEnd,
@@ -627,10 +629,10 @@ function maybeInjectCUPrice(msgBytes: Uint8Array): Uint8Array {
     // 64 zero bytes (invalid sig, but we only want to check structure)
     fakeWire.set(injected, 65);
     VersionedTransaction.deserialize(fakeWire);
-    log("[createBrowserSigner] injection valid ✓ — injecting SetComputeUnitPrice(10000)");
+    console.log("[createBrowserSigner] injection valid ✓ — injecting SetComputeUnitPrice(10000)");
     return injected;
   } catch (e) {
-    warn(
+    console.warn(
       "[createBrowserSigner] injection produced invalid message — falling back to original bytes " +
       "(Phantom will inject its own CU price):",
       e instanceof Error ? e.message : String(e)
@@ -806,7 +808,7 @@ export function createBrowserSigner(
         phantomMsgBytes.every((b, i) => b === msgToSign[i]);
 
       if (!msgMatches) {
-        log(
+        console.log(
           "[createBrowserSigner] Phantom injected CU price (+",
           phantomMsgBytes.length - msgToSign.length, "bytes)"
         );
@@ -824,7 +826,7 @@ export function createBrowserSigner(
       if (walletSig) {
         const pubKeyBytes = bs58.decode(account.address);
         const valid = await verifyEd25519(pubKeyBytes, walletSig, effectiveMessageBytes);
-        log("[createBrowserSigner] wallet sig verifies:", valid,
+        console.log("[createBrowserSigner] wallet sig verifies:", valid,
           "| hasSeed:", hasSeed, "| msgChanged:", !msgMatches);
         if (!valid) {
           throw new Error(
@@ -852,7 +854,7 @@ export function createBrowserSigner(
           const seed = commitmentKeyMap.get(addr)!;
           const reSig = nobleEd25519.sign(effectiveMessageBytes, seed);
           newSigs[addr] = reSig;
-          log("[createBrowserSigner] re-signed commitment slot:", addr.slice(0, 8));
+          console.log("[createBrowserSigner] re-signed commitment slot:", addr.slice(0, 8));
         } else {
           // Fallback: use Phantom's sig if present, else preserve the pre-existing sig.
           const fromWallet = idx < sigsFromWallet.length ? sigsFromWallet[idx] : null;
@@ -863,7 +865,7 @@ export function createBrowserSigner(
         }
       }
 
-      log(
+      console.log(
         "[createBrowserSigner] slots:", signerAddresses.length,
         "| walletSlot:", signerAddresses.indexOf(account.address as string),
         "| msgChanged:", !msgMatches,
@@ -945,7 +947,7 @@ export async function makeClient(
 export async function registerAccount(
   signer: Awaited<ReturnType<typeof createSignerFromPrivateKeyBytes>>
 ): Promise<void> {
-  log("[registerAccount] start", signer.address.slice(0, 8));
+  console.log("[registerAccount] start", signer.address.slice(0, 8));
   let client: Awaited<ReturnType<typeof makeClient>>;
   try {
     // Use skip-preflight for ephemeral registration — the polling forwarder's
@@ -958,15 +960,15 @@ export async function registerAccount(
   // Check if already fully registered — registration is idempotent but skipping
   // the prover avoids a heavy CDN fetch on repeat calls.
   try {
-    log("[registerAccount] querying existing account…");
+    console.log("[registerAccount] querying existing account…");
     const querier = getUserAccountQuerierFunction({ client });
     const existing = await querier(signer.address as Address);
-    log("[registerAccount] account state:", existing.state);
+    console.log("[registerAccount] account state:", existing.state);
     if (existing.state === "exists") {
       const { isUserCommitmentRegistered, isUserAccountX25519KeyRegistered } =
         existing.data;
       if (isUserCommitmentRegistered && isUserAccountX25519KeyRegistered) {
-        log("[registerAccount] already fully registered, skipping");
+        console.log("[registerAccount] already fully registered, skipping");
         return;
       }
     }
@@ -975,15 +977,15 @@ export async function registerAccount(
   }
 
   try {
-    log("[registerAccount] building prover…");
+    console.log("[registerAccount] building prover…");
     const registrationProver = getUserRegistrationProver(makeZkProverDeps());
     const register = getUserRegistrationFunction(
       { client },
       { zkProver: registrationProver }
     );
-    log("[registerAccount] calling register()…");
+    console.log("[registerAccount] calling register()…");
     await register({ confidential: true, anonymous: true });
-    log("[registerAccount] done");
+    console.log("[registerAccount] done");
   } catch (e) {
     throw new Error(`[3c register-tx] ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -1051,7 +1053,7 @@ export async function createPaymentLink({
     } catch (e) {
       throw new Error(`[step 1 keygen] ${e instanceof Error ? e.message : String(e)}`);
     }
-    log("[createPaymentLink] ephemeral address:", ephemeralSigner.address.toString());
+    console.log("[createPaymentLink] ephemeral address:", ephemeralSigner.address.toString());
 
     // 2. Fund ephemeral with SOL for registration fees
     onStatusChange("Funding privacy channel…");
@@ -1124,9 +1126,9 @@ export async function createPaymentLink({
 
       if (needsRegistration) {
         onStatusChange("Registering sender account (wallet prompts 2–4)…");
-        log("[createPaymentLink] step 4a: needs registration, building prover…");
+        console.log("[createPaymentLink] step 4a: needs registration, building prover…");
         const senderRegProver = getUserRegistrationProver(makeZkProverDeps());
-        log("[createPaymentLink] step 4a: prover built, calling senderRegister…");
+        console.log("[createPaymentLink] step 4a: prover built, calling senderRegister…");
         // Capture the commitment-key Ed25519 seed so the browser signer can
         // re-sign the commitment slot against Phantom's post-injection message.
         // The senderSigner above shares this same seedRef (see createBrowserSigner
@@ -1182,7 +1184,7 @@ export async function createPaymentLink({
     );
 
     try {
-      log("[createPaymentLink] step 4b createUtxo calling…", {
+      console.log("[createPaymentLink] step 4b createUtxo calling…", {
         destination: ephemeralSigner.address.toString(),
         mint: tokenCfg.mint,
         amount: amountRaw.toString(),
@@ -1195,7 +1197,7 @@ export async function createPaymentLink({
       });
       // Both deposit transactions confirmed — advance the UI to the final step
       onStatusChange("Deposit confirmed.");
-      log("[createPaymentLink] step 4b createUtxo OK — UTXO should now be in indexer");
+      console.log("[createPaymentLink] step 4b createUtxo OK — UTXO should now be in indexer");
       try {
         await debugLogRecentUtxos(ephemeralSigner.address.toString(), 5);
       } catch {}
@@ -1252,7 +1254,7 @@ export async function createPaymentLink({
       });
       signature = Buffer.from(results[0].signature).toString("base64");
     } catch (e) {
-      warn("Failed to sign metadata authorization message", e);
+      console.warn("Failed to sign metadata authorization message", e);
     }
 
     if (signature) {
@@ -1325,7 +1327,7 @@ export const MAX_LEAVES_PER_TREE = 1n << 20n; // 2^20, matches SDK constant
 export async function getRecentTreeIndices(): Promise<bigint[]> {
   const readClient = new ReadServiceClient({ endpoint: UMBRA_INDEXER_URL });
   const stats = await readClient.getStats();
-  log(
+  console.log(
     "[indexer-stats] total_utxos=" + stats.total_utxos.toString() +
     " latest_absolute_index=" + String(stats.latest_absolute_index)
   );
@@ -1344,23 +1346,23 @@ async function debugLogRecentUtxos(ephemeralAddress: string, count = 10): Promis
     const stats = await readClient.getStats();
     const latest = stats.latest_absolute_index;
     if (latest === null) {
-      log("[indexer-debug] indexer is empty");
+      console.log("[indexer-debug] indexer is empty");
       return;
     }
     const start = latest >= BigInt(count) ? latest - BigInt(count) + 1n : 0n;
     const res = await readClient.getUtxoData({ start, end: latest, limit: BigInt(count) });
-    log(
-      `[indexer-debug] last ${res.items.length} UTXOs ` +
+    console.log(
+      `[indexer-debug] last ${res.items.size} UTXOs ` +
       `(for ephemeral ${ephemeralAddress.slice(0, 8)}…):`
     );
-    for (const u of res.items) {
-      log(
-        `  abs=${u.absolute_index} tree=${u.tree_index} ins=${u.insertion_index}` +
-        ` slot=${u.slot} depositor_x25519=${u.depositor_x25519_public_key.slice(0, 16)}…`
+    for (const [, u] of Array.from(res.items.entries())) {
+      console.log(
+        `  abs=${u.absoluteIndex} tree=${u.treeIndex} ins=${u.insertionIndex}` +
+        ` slot=${u.slot} depositor_x25519=${u.depositorX25519PublicKey.slice(0, 16)}…`
       );
     }
   } catch (e) {
-    warn("[indexer-debug] dump failed:", e);
+    console.warn("[indexer-debug] dump failed:", e);
   }
 }
 
@@ -1466,7 +1468,7 @@ export async function scanForUtxo(
     const scanner = getClaimableUtxoScannerFunction({ client });
 
     const treeIndices = await getRecentTreeIndices();
-    log("[scanForUtxo] scanning trees:", treeIndices.map(String));
+    console.log("[scanForUtxo] scanning trees:", treeIndices.map(String));
     await debugLogRecentUtxos(ephemeralSigner.address.toString());
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -1485,7 +1487,7 @@ export async function scanForUtxo(
             break;
           }
         }
-        log(
+        console.log(
           `[scanForUtxo] attempt ${attempt}/${maxAttempts}` +
           ` → publicReceived=${totals.pubRec}` +
           ` selfBurnable=${totals.selfBurn}` +
@@ -1493,9 +1495,20 @@ export async function scanForUtxo(
           ` publicSelfBurnable=${totals.pubSelfBurn}`
         );
       } catch (scanErr) {
-        warn(`[scanForUtxo] attempt ${attempt} scanner error:`, scanErr);
+        const errMsg = scanErr instanceof Error ? scanErr.message : String(scanErr);
+        console.warn(`[scanForUtxo] attempt ${attempt} scanner error: ${errMsg}`);
+        
+        // Handle "unexpected response format" which is usually an RPC rate limit or 5xx
+        const isRpcError = errMsg.toLowerCase().includes("rpc error") || 
+                          errMsg.toLowerCase().includes("response format") ||
+                          errMsg.toLowerCase().includes("fetch");
+
         if (attempt === maxAttempts) throw scanErr;
-        await new Promise((r) => setTimeout(r, retryDelayMs));
+
+        // Exponential backoff for RPC errors
+        const delay = isRpcError ? retryDelayMs * (1 + attempt * 0.5) : retryDelayMs;
+        console.log(`[scanForUtxo] Retrying in ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
         continue;
       }
 
@@ -1507,7 +1520,7 @@ export async function scanForUtxo(
       }
 
       if (attempt < maxAttempts) {
-        log(`[scanForUtxo] nothing yet, retrying in ${retryDelayMs}ms…`);
+        console.log(`[scanForUtxo] nothing yet, retrying in ${retryDelayMs}ms…`);
         await new Promise((r) => setTimeout(r, retryDelayMs));
       }
     }
@@ -1565,7 +1578,7 @@ export async function claimPaymentLink({
       throw new Error("This payment link has already been claimed.");
     }
 
-    const client = await makeClient(ephemeralSigner, { skipPreflight: false });
+    const client = await makeClient(ephemeralSigner, { skipPreflight: true });
 
     // Re-scan to get the UTXO
     onStatusChange("Scanning shielded pool…");
@@ -1615,24 +1628,79 @@ export async function claimPaymentLink({
           relayer,
         }
       );
-      const claimResult = await claim([utxo]);
+      
+      let attempt = 1;
+      const maxAttempts = 3;
+      let success = false;
 
-      // Poll each batch until the ZK computation finalizes
-      onStatusChange("Waiting for ZK proof verification…");
-      for (const [, batch] of claimResult.batches) {
-        await pollClaimUntilTerminal(
-          (rid) => relayer.pollClaimStatus(rid),
-          batch.requestId,
-          {
-            onProgress: (event) => {
-              if (event.status === "submitting" || event.status === "submitted") {
-                onStatusChange("ZK proof submitting on-chain…");
-              } else if (event.status === "awaiting_callback" || event.status === "finalizing") {
-                onStatusChange("ZK proof verifying on-chain…");
+      while (attempt <= maxAttempts && !success) {
+        try {
+          const claimResult = await claim([utxo]);
+
+          // Poll each batch until the ZK computation finalizes
+          onStatusChange(`Waiting for ZK proof verification${attempt > 1 ? ` (attempt ${attempt})` : ""}…`);
+          for (const [, batch] of claimResult.batches) {
+            const final = await pollClaimUntilTerminal(
+              (rid) => relayer.pollClaimStatus(rid),
+              batch.requestId,
+              {
+                onProgress: (event) => {
+                  if (event.status === "submitting" || event.status === "submitted") {
+                    onStatusChange("ZK proof submitting on-chain…");
+                  } else if (event.status === "awaiting_callback" || event.status === "finalizing") {
+                    onStatusChange("ZK proof verifying on-chain…");
+                  }
+                },
               }
-            },
+            );
+
+            if (final.status === "failed") {
+              const burnt = final.failureReason?.includes("0x6d64") || final.failureReason?.includes("NullifierAlreadyBurnt");
+              if (burnt) {
+                success = true;
+                break;
+              }
+              
+              // If it's a transient RPC error from the relayer, retry the whole claim
+              const isRpcError = final.failureReason?.toLowerCase().includes("rpc error") || 
+                                final.failureReason?.toLowerCase().includes("response format") ||
+                                final.failureReason?.toLowerCase().includes("fetch");
+              
+              if (isRpcError && attempt < maxAttempts) {
+                attempt++;
+                const delay = 2000 * (attempt - 1);
+                onStatusChange(`RPC error, retrying (${attempt}/${maxAttempts})…`);
+                await new Promise(r => setTimeout(r, delay));
+                continue; // Retry while loop
+              }
+              
+              throw new Error(final.failureReason);
+            }
           }
-        );
+          success = true;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const isBurnt = msg.includes("0x6d64") || msg.includes("NullifierAlreadyBurnt");
+          if (isBurnt) {
+            success = true;
+            break;
+          }
+
+          const isRpcError = msg.toLowerCase().includes("rpc error") || 
+                            msg.toLowerCase().includes("response format") ||
+                            msg.toLowerCase().includes("fetch") ||
+                            msg.toLowerCase().includes("failed to fetch");
+
+          if (isRpcError && attempt < maxAttempts) {
+            attempt++;
+            const delay = 2000 * (attempt - 1);
+            onStatusChange(`RPC error, retrying (${attempt}/${maxAttempts})…`);
+            await new Promise(r => setTimeout(r, delay));
+            continue; // Retry while loop
+          }
+
+          throw e;
+        }
       }
       
       // We add a retry block with a generous initial delay here. The Relayer may mark
@@ -1676,7 +1744,7 @@ export async function claimPaymentLink({
         }
 
         const availableBalance = BigInt(balanceResult.balance.toString());
-        log(`[withdraw] Attempt ${attempt}: Available balance is ${availableBalance}`);
+        console.log(`[withdraw] Attempt ${attempt}: Available balance is ${availableBalance}`);
         if (availableBalance === 0n) {
           throw new Error("Encrypted balance is 0. Waiting for RPC to sync the claim...");
         }
@@ -1691,7 +1759,7 @@ export async function claimPaymentLink({
         );
         break; // Success
       } catch (e) {
-        warn(`Withdrawal attempt ${attempt} failed:`, e);
+        console.warn(`Withdrawal attempt ${attempt} failed:`, e);
         if (attempt === 5) throw e;
         // Brief pause so the RPC gets a new slot (and thus a fresh blockhash)
         await new Promise(r => setTimeout(r, 2000));
@@ -1848,11 +1916,11 @@ export async function ensureAssociatedTokenAccount(
 
   const ataInfo = await connection.getAccountInfo(ata, "confirmed");
   if (ataInfo) {
-    log("[ensureATA] already exists:", ata.toString());
+    console.log("[ensureATA] already exists:", ata.toString());
     return;
   }
 
-  log("[ensureATA] creating token account:", ata.toString(), "mint:", mint.slice(0, 8));
+  console.log("[ensureATA] creating token account:", ata.toString(), "mint:", mint.slice(0, 8));
 
   const tx = new Transaction();
   tx.add(
@@ -1873,9 +1941,9 @@ export async function ensureAssociatedTokenAccount(
   const [output] = await signFeature.signTransaction({ account, transaction: serialized });
 
   const sig = await connection.sendRawTransaction(output.signedTransaction, { skipPreflight: true });
-  log("[ensureATA] submitted:", sig);
+  console.log("[ensureATA] submitted:", sig);
   await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-  log("[ensureATA] confirmed — ATA ready");
+  console.log("[ensureATA] confirmed — ATA ready");
 }
 
 /** Create the ATA for an ephemeral keypair. Used in the claim flow. */
@@ -1890,17 +1958,17 @@ async function ensureEphemeralAta(
 
   const ataInfo = await connection.getAccountInfo(ata, "confirmed");
   if (ataInfo) {
-    log("[ensureEphemeralAta] already exists:", ata.toString());
+    console.log("[ensureEphemeralAta] already exists:", ata.toString());
     return;
   }
 
-  log("[ensureEphemeralAta] creating ATA:", ata.toString());
+  console.log("[ensureEphemeralAta] creating ATA:", ata.toString());
   const tx = new Transaction();
   tx.add(createAssociatedTokenAccountIdempotentInstruction(
     ownerPubkey, ata, ownerPubkey, mintPubkey
   ));
   await sendAndConfirmTransaction(connection, tx, [ephemeralKeypair], { skipPreflight: true });
-  log("[ensureEphemeralAta] created");
+  console.log("[ensureEphemeralAta] created");
 }
 
 // ─── Sweep Ephemeral ─────────────────────────────────────────────────────────
@@ -1931,7 +1999,7 @@ async function sweepEphemeral(
   // Record initial SOL balance before we wait, to detect when funds arrive
   const initialSolBalance = await connection.getBalance(ephemeralPubkey, "confirmed");
 
-  log(`[sweep] Initial SOL balance: ${initialSolBalance}`);
+  console.log(`[sweep] Initial SOL balance: ${initialSolBalance}`);
 
   if (token !== "SOL") {
     const mintPubkey = new PublicKey(TOKEN_CONFIG[token].mint);
@@ -1944,7 +2012,7 @@ async function sweepEphemeral(
         const balanceInfo = await connection.getTokenAccountBalance(ephemeralAta, "confirmed");
         tokenBalance = BigInt(balanceInfo.value.amount);
         if (tokenBalance > 0n) {
-          log(`[sweep] Found ${tokenBalance} tokens in ATA after ${i * 3}s`);
+          console.log(`[sweep] Found ${tokenBalance} tokens in ATA after ${i * 3}s`);
           break;
         }
       } catch {
@@ -1982,7 +2050,7 @@ async function sweepEphemeral(
     solBalance = await connection.getBalance(ephemeralPubkey, "confirmed");
     // If it's a SOL link, wait for balance to significantly increase vs initial
     if (token === "SOL" && solBalance > initialSolBalance + 1000000) {
-      log(`[sweep] Found incoming SOL after ${i * 3}s (balance: ${solBalance})`);
+      console.log(`[sweep] Found incoming SOL after ${i * 3}s (balance: ${solBalance})`);
       break;
     }
     // If it's a token link, we just sweep the rent, but we already waited for the token ATA above
@@ -2056,7 +2124,7 @@ async function sweepEphemeral(
       await sendAndConfirmTransaction(connection, tx, [ephemeralKeypair], { skipPreflight: false });
     }
   } catch (e) {
-    warn("Failed to sweep remaining ephemeral SOL:", e);
+    console.warn("Failed to sweep remaining ephemeral SOL:", e);
     if (token === "SOL") {
       throw new Error(`Failed to sweep SOL to your wallet: ${e instanceof Error ? e.message : String(e)}`);
     }
