@@ -42,12 +42,12 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# debug/dev scripts (not for production)
-scripts/
-
-# local skills and AI tooling
-skills/
+# local AI tooling
 .gemini/
 .superstack/
 .claude/
 claude-session.jsonl
+CLAUDE.md
+AGENT.md
+.gemini/*
+postcss.config.mjs
