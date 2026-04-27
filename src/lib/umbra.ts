@@ -1674,7 +1674,7 @@ export async function claimPaymentLink({
                 continue; // Retry while loop
               }
               
-              throw new Error(final.failureReason);
+              throw new Error(final.failureReason ?? "Unknown failure");
             }
           }
           success = true;

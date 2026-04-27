@@ -294,7 +294,7 @@ export default function DashboardPage() {
                 if (burnt) { success = true; break; }
                 const isRpcError = final.failureReason?.toLowerCase().includes("rpc error") || final.failureReason?.toLowerCase().includes("response format") || final.failureReason?.toLowerCase().includes("fetch");
                 if (isRpcError && attempt < maxAttempts) { attempt++; await new Promise(r => setTimeout(r, 2000 * (attempt - 1))); continue; }
-                throw new Error(`Claim failed: ${final.failureReason}`);
+                throw new Error(`Claim failed: ${final.failureReason ?? "Unknown failure"}`);
               }
             }
             success = true;
