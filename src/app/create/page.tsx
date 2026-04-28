@@ -249,7 +249,11 @@ function SecureLink({ link }: { link: string }) {
     if (!qrDataUrl) {
       // Dynamic import — QR generated entirely client-side, secret never leaves browser.
       const QRCode = (await import("qrcode")).default;
-      const url = await QRCode.toDataURL(link, {
+      
+      // Wrap the link in Phantom's deep link to open its inbuilt browser on mobile
+      const phantomLink = `https://phantom.app/ul/browse/${encodeURIComponent(link)}?ref=${encodeURIComponent(window.location.origin)}`;
+      
+      const url = await QRCode.toDataURL(phantomLink, {
         width: 220, margin: 2,
         // VP sky blue dots on dark navy — matches the UI in both light and dark mode
         color: { dark: "#00b3ff", light: "#06111f" },
