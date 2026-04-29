@@ -39,7 +39,7 @@ node -e "require('snarkjs'); require('bs58'); console.log('Runtime Ready')"
 
 Based on field feedback, several technical hurdles have been resolved in the current script versions:
 
-1.  **Authorization Format**: Modern VeilPay servers require "Shielded UTXO" (Receiver-Claimable) payments. `pay-invoice.cjs` has been updated to generate a 3-part header: `x402 <proofAccountSig>:<utxoSig>:<invoiceId>`.
+1.  **Authorization Format**: Modern VeilPay servers require "Shielded UTXO" (Receiver-Claimable) payments. `pay-invoice.cjs` has been updated to generate a 3-part header: `X-402-Payment: x402 <proofAccountSig>:<utxoSig>:<invoiceId>`.
 2.  **SDK Response Mapping**: The script correctly maps `createProofAccountSignature` and `createUtxoSignature` from the Umbra SDK to the authorization header.
 3.  **Indexer Lag**: Shielded transactions are not immediately visible to the Umbra indexer. `pay-invoice.cjs` now includes a mandatory 15-second sleep after broadcast to ensure the server can verify the payment on-chain.
 4.  **Devnet Reliability**: All scripts now use `skipPreflight: true` and `confirmed` blockhashes to bypass simulation failures and propagation lag on Solana devnet.
