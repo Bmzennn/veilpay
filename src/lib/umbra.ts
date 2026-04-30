@@ -156,7 +156,15 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
           `/api/zk-proxy?url=${encodeURIComponent(`${CDN_BASE}/manifest.json`)}`
         );
         if (!res.ok) throw new Error(`ZK manifest fetch failed (${res.status})`);
-        manifestCache = (await res.json()) as Manifest;
+        
+        const text = await res.text();
+        if (!text) throw new Error("ZK manifest is empty");
+        
+        try {
+          manifestCache = JSON.parse(text) as Manifest;
+        } catch (e) {
+          throw new Error(`Failed to parse ZK manifest: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
 
       const assetEntry = manifestCache.assets[type];
@@ -353,40 +361,10 @@ export function makeSkipPreflightForwarder() {
       "msgFirstByte:", tx.messageBytes[0]?.toString(16)
     );
 
-    // Run simulation (no sig-verify) to see if the tx is structurally valid
-    // and get program-level logs. This fires in parallel with the submit.
-    try {
-      const { VersionedTransaction } = await import("@solana/web3.js");
-      const vTx = VersionedTransaction.deserialize(wire);
-      const sim = await conn.simulateTransaction(vTx, {
-        sigVerify: false,
-        commitment: "processed",
-      });
-      if (sim.value.err) {
-        console.error(
-          "[sendAndConfirm] ⚠️ simulation FAILED — tx will likely be dropped:",
-          JSON.stringify(sim.value.err),
-          "\n  logs:", sim.value.logs?.join("\n  ") ?? "(none)"
-        );
-      } else {
-        console.log(
-          "[sendAndConfirm] ✅ simulation OK — units:", sim.value.unitsConsumed
-        );
-      }
-    } catch (simErr) {
-      console.warn(
-        "[sendAndConfirm] simulation threw (may be a format issue):",
-        simErr instanceof Error ? simErr.message : String(simErr)
-      );
-    }
-
     // Send once to get a signature, then rebroadcast every RESUBMIT_MS while polling.
     // Solana validators can drop transactions under load — resubmitting keeps it alive.
     async function trySend(): Promise<string> {
       try {
-        // No maxRetries override — let the RPC node retry propagation to the
-        // leader until the blockhash expires. maxRetries: 0 was silently killing
-        // transactions: the RPC sent once, the leader dropped it, nobody retried.
         return await conn.sendRawTransaction(wire, { skipPreflight: true });
       } catch (e) {
         const raw = e instanceof Error ? e.message : String(e);
@@ -411,8 +389,8 @@ export function makeSkipPreflightForwarder() {
     // lets callers retry with a fresh SDK call (new tx, new blockhash)
     // instead of endlessly resubmitting a tx whose blockhash already expired.
     const MAX_WAIT_MS = 55_000;
-    const POLL_MS = 2_000;
-    const RESUBMIT_MS = 10_000;
+    const POLL_MS = 1_000; // Tightened from 2s to 1s
+    const RESUBMIT_MS = 8_000; // Tightened from 10s to 8s
     const deadline = Date.now() + MAX_WAIT_MS;
     let lastResubmit = Date.now();
     let pollCount = 0;
@@ -1157,6 +1135,35 @@ export async function createPaymentLink({
     }
 
     // 4b. Create receiver-claimable UTXO from sender → ephemeral (public balance).
+    
+    // Safety check: ensure the ephemeral SOL we sent in step 2 has propagated and is sufficient.
+    try {
+      const connection = new Connection(RPC_URL, "confirmed");
+      const ephPubkey = new PublicKey(ephemeralSigner.address.toString());
+      let ephBalance = await connection.getBalance(ephPubkey, "confirmed");
+      
+      console.log(`[createPaymentLink] Ephemeral balance before UTXO: ${ephBalance / 1e9} SOL`);
+
+      // We need at least ~0.013 SOL for the proof account rent + fees.
+      // If we are below this, we wait for propagation.
+      const minNeeded = 0.013 * 1e9; 
+      if (ephBalance < minNeeded) {
+        onStatusChange("Waiting for SOL to propagate…");
+        for (let i = 0; i < 6; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          ephBalance = await connection.getBalance(ephPubkey, "confirmed");
+          console.log(`[createPaymentLink] Propagation poll ${i+1}: ${ephBalance / 1e9} SOL`);
+          if (ephBalance >= minNeeded) break;
+        }
+      }
+
+      if (ephBalance < minNeeded) {
+        console.warn(`[createPaymentLink] DANGER: Balance (${ephBalance / 1e9}) is lower than recommended (0.013). This may fail.`);
+      }
+    } catch (e) {
+      console.warn("[createPaymentLink] Safety check skipped:", e);
+    }
+
     // Three sub-phases:
     //   "Computing deposit proof…"   → step 5 fires here (ZK running, no wallet)
     //   "Depositing into shielded pool…" → step 6 fires from onProofComputation.post
@@ -1333,7 +1340,11 @@ export async function getRecentTreeIndices(): Promise<bigint[]> {
   );
   if (stats.latest_absolute_index === null) return [0n];
   const current = stats.latest_absolute_index / MAX_LEAVES_PER_TREE;
-  return current > 0n ? [current, current - 1n] : [0n];
+  
+  // Just scan current and previous tree for diagnostic focus
+  const indices: bigint[] = current > 0n ? [current, current - 1n] : [0n];
+  console.log("[getRecentTreeIndices] candidate trees:", indices.map(String));
+  return indices;
 }
 
 /**
@@ -1445,6 +1456,94 @@ export async function confidentialTransfer({
   }
 }
 
+// ─── Shield funds (public → own encrypted balance) ──────────────────────────
+
+export interface ShieldFundsArgs {
+  wallet: Wallet;
+  account: WalletAccount;
+  token: Token;
+  amountHuman: string;
+  onStatusChange: (s: string) => void;
+}
+
+export async function shieldFunds({
+  wallet,
+  account,
+  token,
+  amountHuman,
+  onStatusChange,
+}: ShieldFundsArgs): Promise<{ signature: string }> {
+  const validationError = validateAmount(amountHuman, token);
+  if (validationError) throw new Error(validationError);
+
+  const tokenCfg = TOKEN_CONFIG[token];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const amountRaw = BigInt(Math.round(parseFloat(amountHuman) * 10 ** tokenCfg.decimals)) as any;
+
+  const commitmentKeys: CommitmentKeyMap = new Map();
+  const signer = createBrowserSigner(wallet, account, commitmentKeys);
+
+  onStatusChange("Connecting to Umbra…");
+  let client: Awaited<ReturnType<typeof makeClient>>;
+  try {
+    client = await makeClient(signer as Parameters<typeof makeClient>[0], { skipPreflight: true });
+  } catch (e) {
+    throw new Error(`[setup] ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Ensure user is registered (required for encrypted balance PDAs to exist)
+  onStatusChange("Verifying Umbra account…");
+  try {
+    const querier = getUserAccountQuerierFunction({ client });
+    const state = await querier(account.address as Address);
+    const needsRegistration =
+      state.state !== "exists" ||
+      !state.data.isUserCommitmentRegistered ||
+      !state.data.isUserAccountX25519KeyRegistered;
+
+    if (needsRegistration) {
+      onStatusChange("Registering Umbra account (wallet prompts 2–4)…");
+      const regProver = getUserRegistrationProver(makeZkProverDeps());
+      const register = getUserRegistrationFunction(
+        { client },
+        {
+          zkProver: regProver,
+          keys: {
+            userAccountX25519KeypairDeriver: makeCapturingDeriver(
+              getUserAccountX25519KeypairDeriver({ client }),
+              commitmentKeys
+            ),
+            masterViewingKeyEncryptingX25519KeypairDeriver: makeCapturingDeriver(
+              getMasterViewingKeyX25519KeypairDeriver({ client }),
+              commitmentKeys
+            ),
+          },
+        }
+      );
+      await register({ confidential: true, anonymous: true });
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("Registering")) throw new Error(msg);
+    throw new Error(`Account verification failed: ${msg}`);
+  }
+
+  if (token !== "SOL") {
+    onStatusChange(`Preparing ${token} token account…`);
+    await ensureAssociatedTokenAccount(wallet, account, tokenCfg.mint);
+  }
+
+  onStatusChange(`Shielding ${amountHuman} ${token}…`);
+  try {
+    const deposit = getPublicBalanceToEncryptedBalanceDirectDepositorFunction({ client });
+    const sig = await deposit(account.address as Address, tokenCfg.mint as Address, amountRaw);
+    return { signature: typeof sig === "string" ? sig : String(sig) };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Shield failed: ${msg}`);
+  }
+}
+
 /** Format a raw token amount to a human-readable string with no trailing zeros. */
 function formatHumanAmount(rawAmount: bigint, decimals: number): string {
   const human = Number(rawAmount) / 10 ** decimals;
@@ -1476,15 +1575,20 @@ export async function scanForUtxo(
       let foundUtxo: Awaited<ReturnType<typeof scanner>>["publicReceived"][number] | null = null;
 
       try {
-        for (const treeIndex of treeIndices) {
-          const result = await scanner(treeIndex as U32, 0n as U32);
+        const scanResults = await Promise.all(
+          treeIndices.map(treeIndex => scanner(treeIndex as U32, 0n as U32))
+        );
+
+        for (const result of scanResults) {
           totals.pubRec += result.publicReceived.length;
           totals.selfBurn += result.selfBurnable.length;
           totals.recv += result.received.length;
           totals.pubSelfBurn += result.publicSelfBurnable.length;
           if (result.publicReceived.length > 0) {
             foundUtxo = result.publicReceived[0];
-            break;
+            // No break inside for-of when using parallel results, 
+            // but we'll take the first one found.
+            if (!foundUtxo) foundUtxo = result.publicReceived[0];
           }
         }
         console.log(
@@ -1580,15 +1684,23 @@ export async function claimPaymentLink({
 
     const client = await makeClient(ephemeralSigner, { skipPreflight: true });
 
-    // Re-scan to get the UTXO
+    // Re-scan to get the UTXO in parallel across candidate trees
     onStatusChange("Scanning shielded pool…");
     const scanner = getClaimableUtxoScannerFunction({ client });
     const treeIndices = await getRecentTreeIndices();
+
+    const scanResults = await Promise.all(
+      treeIndices.map(treeIndex => scanner(treeIndex as U32, 0n as U32))
+    );
+
     let utxo: Awaited<ReturnType<typeof scanner>>["publicReceived"][number] | null = null;
-    for (const treeIndex of treeIndices) {
-      const { publicReceived } = await scanner(treeIndex as U32, 0n as U32);
-      if (publicReceived.length > 0) {
-        utxo = publicReceived[0];
+    for (const res of scanResults) {
+      if (res.publicReceived.length > 0) {
+        utxo = res.publicReceived[0];
+        console.log(
+          `[claimPaymentLink] UTXO FOUND: tree=${utxo.treeIndex}, ` +
+          `insertion=${utxo.insertionIndex}, amount=${utxo.amount}`
+        );
         break;
       }
     }
@@ -1644,6 +1756,7 @@ export async function claimPaymentLink({
               (rid) => relayer.pollClaimStatus(rid),
               batch.requestId,
               {
+                pollingIntervalMs: 1500, // Faster polling
                 onProgress: (event) => {
                   if (event.status === "submitting" || event.status === "submitted") {
                     onStatusChange("ZK proof submitting on-chain…");
@@ -1703,9 +1816,9 @@ export async function claimPaymentLink({
         }
       }
       
-      // We add a retry block with a generous initial delay here. The Relayer may mark
-      // the ZK proof as verified, but the on-chain state might still be propagating.
-      await new Promise(r => setTimeout(r, 10000)); // Initial 10s delay
+      // Reduced initial delay from 10s to 5s. 
+      // We rely on the tighter polling loop below to detect on-chain propagation.
+      await new Promise(r => setTimeout(r, 5000)); 
     } else {
       // If we don't have a UTXO but DO have an encrypted balance, we are resuming a failed withdrawal
       onStatusChange("Resuming pending withdrawal…");
@@ -1762,7 +1875,7 @@ export async function claimPaymentLink({
         console.warn(`Withdrawal attempt ${attempt} failed:`, e);
         if (attempt === 5) throw e;
         // Brief pause so the RPC gets a new slot (and thus a fresh blockhash)
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
     
@@ -2018,7 +2131,7 @@ async function sweepEphemeral(
       } catch {
         // ATA might not exist or balance is 0
       }
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 1000));
     }
 
     if (tokenBalance > 0n) {
@@ -2050,13 +2163,13 @@ async function sweepEphemeral(
     solBalance = await connection.getBalance(ephemeralPubkey, "confirmed");
     // If it's a SOL link, wait for balance to significantly increase vs initial
     if (token === "SOL" && solBalance > initialSolBalance + 1000000) {
-      console.log(`[sweep] Found incoming SOL after ${i * 3}s (balance: ${solBalance})`);
+      console.log(`[sweep] Found incoming SOL after ${i * 1}s (balance: ${solBalance})`);
       break;
     }
     // If it's a token link, we just sweep the rent, but we already waited for the token ATA above
     if (token !== "SOL") break;
     
-    await new Promise(r => setTimeout(r, 3000));
+    await new Promise(r => setTimeout(r, 1000));
   }
 
   const { blockhash } = await connection.getLatestBlockhash("confirmed");

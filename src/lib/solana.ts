@@ -135,6 +135,25 @@ export async function getSolBalance(address: string): Promise<number> {
 }
 
 /**
+ * Fetch the public SPL token balance for a wallet address + mint.
+ * Returns 0n if the associated token account doesn't exist.
+ */
+export async function getPublicTokenBalance(
+  address: string,
+  mint: string
+): Promise<bigint> {
+  const connection = getConnection();
+  try {
+    const { getAssociatedTokenAddressSync, getAccount } = await import("@solana/spl-token");
+    const ata = getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(address), true);
+    const acct = await getAccount(connection, ata, "confirmed");
+    return acct.amount;
+  } catch {
+    return 0n;
+  }
+}
+
+/**
  * Fetch the list of mint addresses the Umbra relayer supports.
  * Useful for discovering the correct devnet USDC mint address.
  *

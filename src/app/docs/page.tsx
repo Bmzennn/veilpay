@@ -1,295 +1,604 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { BackgroundStage } from "@/components/BackgroundStage";
 import {
-  Shield, Link2, Lock, Zap, Code, Copy, Check, ChevronRight,
-  BookOpen, Terminal, Package, Cpu, Key, ExternalLink,
+  Copy, Check, ChevronRight, Sun, Moon,
+  ExternalLink, Search, ArrowRight, AlertTriangle,
 } from "lucide-react";
-import { VeilPayLogo } from "@/components/VeilPayLogo";
 
-// ── Copy button ──────────────────────────────────────────────────────────────
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = useCallback(async () => {
+// ─── Primitives ───────────────────────────────────────────────────────────────
+
+function CopyBtn({ text }: { text: string }) {
+  const [ok, setOk] = useState(false);
+  const go = useCallback(async () => {
     await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setOk(true); setTimeout(() => setOk(false), 2000);
   }, [text]);
   return (
-    <button
-      onClick={copy}
-      className="absolute top-3 right-3 p-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-white/60 hover:text-white"
-      title="Copy"
-    >
-      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+    <button onClick={go} className="dc-copy" title="Copy">
+      {ok ? <Check size={12} /> : <Copy size={12} />}
     </button>
   );
 }
 
-// ── Code block ───────────────────────────────────────────────────────────────
-function CodeBlock({ code, lang = "bash" }: { code: string; lang?: string }) {
+function Code({ code, lang = "bash" }: { code: string; lang?: string }) {
   return (
-    <div className="relative group rounded-xl overflow-hidden my-4">
-      <div className="bg-gray-900 px-4 pt-9 pb-4 overflow-x-auto">
-        <div className="absolute top-0 left-0 right-0 h-7 bg-gray-800 flex items-center px-4 gap-1.5">
-          {["#FF5F57","#FFBD2E","#28CA42"].map((c) => (
-            <div key={c} className="w-2.5 h-2.5 rounded-full" style={{ background: c }} />
-          ))}
-          <span className="ml-2 text-[10px] text-white/30 font-mono">{lang}</span>
-        </div>
-        <pre className="text-sm text-green-300 font-mono leading-relaxed whitespace-pre-wrap break-all">{code}</pre>
+    <div className="dc-code">
+      <div className="dc-code-bar">
+        <div className="dc-dots"><span /><span /><span /></div>
+        <span className="dc-lang">{lang}</span>
+        <CopyBtn text={code} />
       </div>
-      <CopyButton text={code} />
+      <pre className="dc-pre"><code>{code}</code></pre>
     </div>
   );
 }
 
-// ── Inline code ──────────────────────────────────────────────────────────────
-function IC({ children }: { children: React.ReactNode }) {
-  return (
-    <code style={{ background: "var(--glass-bg-strong)", border: "0.5px solid var(--hairline)", borderRadius: 6, padding: "2px 6px", fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--vp-sky-deep)" }}>
-      {children}
-    </code>
-  );
-}
-
-function H2({ id, children }: { id: string; children: React.ReactNode }) {
-  return (
-    <h2 id={id} style={{ fontSize: 20, fontWeight: 600, color: "var(--ink)", letterSpacing: "-0.02em", marginTop: 40, marginBottom: 16, display: "flex", alignItems: "center", gap: 8, scrollMarginTop: 96 }}>
-      <span style={{ width: 4, height: 20, borderRadius: 2, background: "var(--vp-sky)", flexShrink: 0 }} />
-      {children}
-    </h2>
-  );
-}
-
-function H3({ children }: { children: React.ReactNode }) {
-  return <h3 style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", marginTop: 24, marginBottom: 8 }}>{children}</h3>;
-}
-
-function P({ children }: { children: React.ReactNode }) {
-  return <p style={{ fontSize: 14, color: "var(--ink-2)", lineHeight: 1.7, marginBottom: 12 }}>{children}</p>;
+function IC({ c }: { c: string }) {
+  return <code className="dc-ic">{c}</code>;
 }
 
 function Note({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ margin: "16px 0", display: "flex", gap: 12, background: "rgba(0,179,255,0.06)", border: "0.5px solid rgba(0,179,255,0.2)", borderRadius: 12, padding: "12px 16px" }}>
-      <span style={{ color: "var(--vp-sky)", flexShrink: 0 }}>ℹ</span>
-      <p style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.6, margin: 0 }}>{children}</p>
-    </div>
-  );
+  return <div className="dc-callout dc-info"><span>ℹ</span><p>{children}</p></div>;
 }
-
 function Warn({ children }: { children: React.ReactNode }) {
+  return <div className="dc-callout dc-warn"><AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} /><p>{children}</p></div>;
+}
+
+function SH({ id, tag, children }: { id: string; tag?: string; children: React.ReactNode }) {
   return (
-    <div style={{ margin: "16px 0", display: "flex", gap: 12, background: "rgba(245,158,11,0.06)", border: "0.5px solid rgba(245,158,11,0.2)", borderRadius: 12, padding: "12px 16px" }}>
-      <span style={{ color: "#d97706", flexShrink: 0 }}>⚠</span>
-      <p style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.6, margin: 0 }}>{children}</p>
+    <div id={id} className="dc-section-head">
+      {tag && <span className="dc-tag">{tag}</span>}
+      <h2 className="dc-sh">{children}</h2>
     </div>
   );
 }
+function H3({ id, children }: { id?: string; children: React.ReactNode }) {
+  return <h3 id={id} className="dc-h3">{children}</h3>;
+}
+function P({ children }: { children: React.ReactNode }) {
+  return <p className="dc-p">{children}</p>;
+}
+function UL({ items }: { items: React.ReactNode[] }) {
+  return <ul className="dc-ul">{items.map((it, i) => <li key={i}>{it}</li>)}</ul>;
+}
+function Steps({ items }: { items: [string, React.ReactNode][] }) {
+  return (
+    <ol className="dc-steps">
+      {items.map(([title, body], i) => (
+        <li key={i}>
+          <span className="dc-step-num">{i + 1}</span>
+          <span className="dc-step-body"><strong>{title}</strong>{body ? <> — {body}</> : null}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+function Table({ head, rows }: { head: string[]; rows: (string | React.ReactNode)[][] }) {
+  return (
+    <div className="dc-table-wrap">
+      <table className="dc-table">
+        <thead>
+          <tr>{head.map((h, i) => <th key={i}>{h}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function Badge({ label, color = "sky" }: { label: string; color?: "sky" | "green" | "amber" | "red" }) {
+  const colors: Record<string, { bg: string; text: string; border: string }> = {
+    sky:   { bg: "rgba(0,179,255,0.1)",   text: "var(--vp-sky-deep)", border: "rgba(0,179,255,0.25)" },
+    green: { bg: "rgba(5,150,105,0.1)",   text: "#059669",            border: "rgba(5,150,105,0.25)" },
+    amber: { bg: "rgba(245,158,11,0.1)",  text: "#d97706",            border: "rgba(245,158,11,0.25)" },
+    red:   { bg: "rgba(220,38,38,0.08)",  text: "#dc2626",            border: "rgba(220,38,38,0.2)" },
+  };
+  const c = colors[color];
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.04em", padding: "2px 8px", borderRadius: 999, background: c.bg, color: c.text, border: `0.5px solid ${c.border}` }}>
+      {label}
+    </span>
+  );
+}
 
-// ── Nav items ─────────────────────────────────────────────────────────────────
+// ─── Nav structure ────────────────────────────────────────────────────────────
+
 const NAV = [
-  { id: "intro",            label: "Introduction",           icon: <BookOpen className="w-3.5 h-3.5" /> },
-  { id: "private-links",    label: "Private Payment Links",  icon: <Link2 className="w-3.5 h-3.5" /> },
-  { id: "confidential",     label: "Confidential Transfers", icon: <Lock className="w-3.5 h-3.5" /> },
-  { id: "x402",             label: "Private x402 Payments",  icon: <Zap className="w-3.5 h-3.5" /> },
-  { id: "sdk",              label: "@veilpay/x402-sdk",       icon: <Package className="w-3.5 h-3.5" /> },
-  { id: "skill",            label: "VeilPay Skill (AI Agent)",icon: <Cpu className="w-3.5 h-3.5" /> },
-  { id: "security",         label: "Security Model",         icon: <Key className="w-3.5 h-3.5" /> },
+  { group: "Get Started", items: [
+    { id: "intro",      label: "Introduction" },
+    { id: "quickstart", label: "Quickstart" },
+    { id: "tokens",     label: "Supported Tokens" },
+  ]},
+  { group: "Concepts", items: [
+    { id: "how-umbra",  label: "How Umbra Works" },
+    { id: "utxos",      label: "UTXOs & the Mixer" },
+    { id: "enc-bal",    label: "Encrypted Balances" },
+  ]},
+  { group: "Features", items: [
+    { id: "links",      label: "Private Payment Links" },
+    { id: "conf",       label: "Confidential Transfers" },
+    { id: "shield",     label: "Shield & Unshield" },
+    { id: "x402",       label: "x402 Payments" },
+  ]},
+  { group: "SDK & Integrations", items: [
+    { id: "sdk",        label: "@veilpay/x402-sdk" },
+    { id: "skill",      label: "VeilPay Agent Skill" },
+  ]},
+  { group: "Security", items: [
+    { id: "security",   label: "Security Model" },
+    { id: "privacy",    label: "Privacy Guarantees" },
+  ]},
 ];
+const ALL_IDS = NAV.flatMap(g => g.items);
+
+// ─── Search index ────────────────────────────────────────────────────────────
+
+const SEARCH_INDEX = NAV.flatMap(({ group, items }) =>
+  items.map(({ id, label }) => ({ id, label, group }))
+);
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DocsPage() {
-  const [activeSection, setActiveSection] = useState("intro");
+  const [active, setActive] = useState("intro");
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("vp-theme") as "light" | "dark" | null;
+    const pref = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    const init = stored ?? pref;
+    setTheme(init);
+    document.documentElement.dataset.theme = init;
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(p => {
+      const n = p === "light" ? "dark" : "light";
+      localStorage.setItem("vp-theme", n);
+      document.documentElement.dataset.theme = n;
+      return n;
+    });
+  }, []);
+
+  // Scroll-spy via IntersectionObserver
+  useEffect(() => {
+    const els = ALL_IDS.map(s => document.getElementById(s.id)).filter(Boolean) as HTMLElement[];
+    const io = new IntersectionObserver(
+      entries => { entries.forEach(e => { if (e.isIntersecting) setActive(e.target.id); }); },
+      { rootMargin: "-15% 0px -65% 0px" }
+    );
+    els.forEach(el => io.observe(el));
+    return () => io.disconnect();
+  }, []);
+
+  const go = useCallback((id: string) => {
+    const el = document.getElementById(id);
+    if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); setActive(id); }
+  }, []);
+
+  const searchResults = searchQuery.trim().length > 0
+    ? SEARCH_INDEX.filter(item =>
+        item.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.group.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : SEARCH_INDEX;
+
+  // Close search on outside click
+  useEffect(() => {
+    if (!searchOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+        setSearchQuery("");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [searchOpen]);
+
+  // ⌘K / Ctrl+K opens search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      }
+      if (e.key === "Escape") { setSearchOpen(false); setSearchQuery(""); }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--bg)", color: "var(--ink)" }}>
-      {/* Top bar */}
-      <nav style={{ position: "sticky", top: 0, zIndex: 50, borderBottom: "1px solid var(--hairline)", background: "var(--glass-bg)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 24px", height: 52, display: "flex", alignItems: "center", gap: 12 }}>
-          <a href="/" style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            <VeilPayLogo size="xs" />
-            <span style={{ fontWeight: 600, fontSize: 14, letterSpacing: "-0.02em", color: "var(--ink)" }}>VeilPay</span>
-          </a>
-          <ChevronRight style={{ width: 14, height: 14, color: "var(--ink-4)", flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: "var(--ink-3)", fontWeight: 500 }}>Docs</span>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
-            <a href="/create" style={{ fontSize: 12, color: "var(--vp-sky-deep)", fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>
-              Open App <ExternalLink style={{ width: 11, height: 11 }} />
+    // Outer shell: no stacking context (no z-index), just positions the fixed background
+    <div style={{ minHeight: "100vh", position: "relative", background: "var(--bg)" }}>
+      <BackgroundStage animOn={false} fixed />
+
+      {/* Content wrapper: z-index:1 lifts everything above the fixed background */}
+      <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+
+      {/* ── Top bar ── */}
+      <header className="dc-topbar glass">
+        <div className="dc-topbar-inner">
+          {/* Left: logo + breadcrumb */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            <a href="/" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 22, height: 22 }} />
+              <span style={{ fontWeight: 600, fontSize: 14, letterSpacing: "-0.02em" }}>VeilPay</span>
             </a>
+            <ChevronRight size={12} style={{ color: "var(--ink-4)" }} />
+            <span style={{ fontSize: 13, color: "var(--ink-3)" }}>Docs</span>
+          </div>
+
+          {/* Center: search */}
+          <div ref={searchRef} style={{ flex: 1, maxWidth: 380, position: "relative" }}>
+            <div
+              className="dc-search"
+              onClick={() => { setSearchOpen(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+            >
+              <Search size={13} style={{ color: "var(--ink-4)", flexShrink: 0 }} />
+              {searchOpen
+                ? <input
+                    ref={searchInputRef}
+                    className="dc-search-input"
+                    placeholder="Search documentation…"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    onClick={e => e.stopPropagation()}
+                    autoFocus
+                  />
+                : <span style={{ fontSize: 13, color: "var(--ink-4)", flex: 1 }}>Search documentation…</span>
+              }
+              <kbd className="dc-kbd">⌘K</kbd>
+            </div>
+
+            {/* Search dropdown */}
+            {searchOpen && (
+              <div className="dc-search-drop glass">
+                {searchResults.length === 0 ? (
+                  <p style={{ fontSize: 12.5, color: "var(--ink-4)", padding: "12px 14px", margin: 0 }}>No results for &ldquo;{searchQuery}&rdquo;</p>
+                ) : (
+                  searchResults.map(item => (
+                    <button
+                      key={item.id}
+                      className="dc-search-result"
+                      onClick={() => { go(item.id); setSearchOpen(false); setSearchQuery(""); }}
+                    >
+                      <span style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)" }}>{item.label}</span>
+                      <span style={{ fontSize: 11, color: "var(--ink-4)", marginLeft: "auto" }}>{item.group}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Right: links + theme */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <a href="https://github.com/Bmzennn/veilpay" target="_blank" rel="noopener noreferrer" className="dc-topbar-link">
+              GitHub <ExternalLink size={10} />
+            </a>
+            <a href="/create" className="btn btn-primary" style={{ fontSize: 12.5, padding: "7px 16px", gap: 6 }}>
+              Get Started <ArrowRight size={12} />
+            </a>
+            <button className="dc-theme-btn" onClick={toggleTheme} aria-label="Toggle theme">
+              {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+            </button>
           </div>
         </div>
-      </nav>
+      </header>
 
-      <div style={{ maxWidth: 1200, margin: "0 auto", width: "100%", display: "flex", flex: 1, padding: "0 24px", paddingTop: 32, paddingBottom: 32, gap: 32 }}>
-        {/* Sidebar */}
-        <aside style={{ display: "none", flexDirection: "column", width: 208, flexShrink: 0 }} className="hidden md:flex">
-          <div style={{ position: "sticky", top: 96, display: "flex", flexDirection: "column", gap: 2 }}>
-            <p style={{ fontSize: 10, color: "var(--ink-4)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, padding: "0 12px 8px" }}>Contents</p>
-            {NAV.map((item) => (
-              <a
-                key={item.id}
-                href={`#${item.id}`}
-                onClick={() => setActiveSection(item.id)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
-                  borderRadius: 10, fontSize: 12.5, fontWeight: 500, transition: "all 0.15s",
-                  color: activeSection === item.id ? "var(--vp-sky-deep)" : "var(--ink-3)",
-                  background: activeSection === item.id ? "rgba(0,179,255,0.08)" : "transparent",
-                  border: activeSection === item.id ? "0.5px solid rgba(0,179,255,0.2)" : "0.5px solid transparent",
-                }}
-              >
-                {item.icon}
-                {item.label}
-              </a>
+      {/* ── 3-column body ── */}
+      <div className="dc-body">
+
+        {/* Left sidebar */}
+        <aside className="dc-sidebar-l">
+          <div className="dc-sidebar-l-inner">
+            {NAV.map(({ group, items }) => (
+              <div key={group} className="dc-nav-group">
+                <p className="dc-nav-group-label">{group}</p>
+                {items.map(({ id, label }) => (
+                  <button
+                    key={id}
+                    className={`dc-nav-item${active === id ? " is-active" : ""}`}
+                    onClick={() => go(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
         </aside>
 
-        {/* Content */}
-        <main style={{ flex: 1, minWidth: 0, maxWidth: 720 }}>
-          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+        {/* Main content */}
+        <main className="dc-main">
 
-            {/* ─── Introduction ──────────────────────────────────────────────── */}
-            <H2 id="intro">Introduction</H2>
-            <P>
-              <strong>VeilPay</strong> is a private payments application built on the{" "}
-              <a href="https://umbraprivacy.com" className="text-[#00b3ff] hover:underline" target="_blank" rel="noopener noreferrer">Umbra Protocol</a>{" "}
-              on Solana. It lets users send and receive cryptocurrency with zero on-chain link between sender and recipient, using Groth16 ZK proofs and Arcium MPC encryption.
-            </P>
-            <P>
-              VeilPay exposes three payment primitives:
-            </P>
-            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 16px", display: "flex", flexDirection: "column", gap: 8 }}>
-              {[
-                ["Private Payment Links", "Shareable URLs that encode an ephemeral claim key. Sender and recipient are both anonymous."],
-                ["Confidential Transfers", "Direct encrypted deposits to a known recipient's Umbra balance. Amount is hidden; recipient address is known."],
-                ["Private x402 Payments", "HTTP 402 payment flow using Umbra stealth deposits. Enables private pay-per-request API access."],
-              ].map(([title, desc]) => (
-                <li key={title} style={{ display: "flex", gap: 8, fontSize: 14, color: "var(--ink-2)" }}>
-                  <span style={{ color: "var(--vp-sky)", flexShrink: 0, marginTop: 1 }}>→</span>
-                  <span><strong style={{ color: "var(--ink)" }}>{title}</strong> — {desc}</span>
-                </li>
-              ))}
-            </ul>
-            <Note>All networks: devnet for development, mainnet for production. Set <IC>NEXT_PUBLIC_NETWORK=mainnet</IC> in your environment to switch.</Note>
+          {/* ── Introduction ── */}
+          <SH id="intro" tag="Get Started">Introduction</SH>
+          <P><strong>VeilPay</strong> is a private payments application built on the <a href="https://umbraprivacy.com" target="_blank" rel="noopener noreferrer" className="dc-link">Umbra Protocol</a> on Solana. It lets anyone send and receive tokens with zero on-chain link between sender and recipient — using Groth16 ZK proofs and Arcium MPC encryption.</P>
+          <P>VeilPay exposes four primitives over a single shielded pool:</P>
+          <UL items={[
+            <><strong>Private Payment Links</strong> — shareable URLs that encode an ephemeral claim key. Both sender and recipient remain fully anonymous on-chain.</>,
+            <><strong>Confidential Transfers</strong> — direct encrypted deposits to a known recipient&apos;s Umbra balance. The amount is hidden; addresses are known.</>,
+            <><strong>Shield &amp; Unshield</strong> — move tokens between your own public wallet and your private encrypted balance at any time.</>,
+            <><strong>x402 Payments</strong> — HTTP 402 pay-per-request flows using Umbra stealth deposits. The server receives payment without learning who paid.</>,
+          ]} />
+          <Note>Set <IC c="NEXT_PUBLIC_NETWORK=mainnet" /> to target mainnet. Default is devnet. On devnet, only SOL transfers work natively.</Note>
 
-            {/* ─── Private Payment Links ─────────────────────────────────────── */}
-            <H2 id="private-links">Private Payment Links</H2>
-            <P>
-              Private links let any sender create a one-time claimable payment that lives in the Umbra shielded pool. No recipient wallet is needed at creation time — you share the link and they claim it later.
-            </P>
+          {/* ── Quickstart ── */}
+          <SH id="quickstart" tag="Get Started">Quickstart</SH>
+          <P>Get VeilPay running locally in under five minutes.</P>
 
-            <H3>How it works</H3>
-            <ol style={{ listStyle: "none", padding: 0, margin: "0 0 16px", display: "flex", flexDirection: "column", gap: 8 }}>
-              {[
-                "A fresh ephemeral Ed25519 keypair is generated in the browser.",
-                "A small SOL buffer is sent to the ephemeral address to cover Umbra registration rent.",
-                "The ephemeral address is registered with the Umbra program (X25519 keys, one ZK proof transaction).",
-                "The sender creates a receiver-claimable UTXO in Umbra's indexed Merkle tree, addressed to the ephemeral key.",
-                "The ephemeral private key and token type are encoded into the URL hash: /claim?lid=…&exp=…#<bs58Key>:<TOKEN>",
-                "The hash never reaches the server — it lives only in the browser.",
-              ].map((s, i) => (
-                <li key={i} className="flex gap-2">
-                  <span className="text-[#00b3ff] font-bold shrink-0">{i + 1}.</span>
-                  {s}
-                </li>
-              ))}
-            </ol>
+          <H3>Prerequisites</H3>
+          <UL items={["Node.js 18+ and npm", "A Phantom or Solflare wallet browser extension", "A Supabase project (free tier works)", "A Solana RPC endpoint (Helius, QuickNode, or the public devnet)"]} />
 
-            <H3>Creating a link (UI)</H3>
-            <P>Navigate to <IC>/create</IC>, connect your wallet, select <strong>Private Link</strong>, choose an amount and token, then click <strong>Create Private Link</strong>. The flow takes 20–90 seconds depending on ZK proof generation time.</P>
+          <H3>Clone and install</H3>
+          <Code lang="bash" code={`git clone https://github.com/your-org/veilpay
+cd veilpay/app
+npm install`} />
 
-            <H3>Claiming a link</H3>
-            <P>Open the link URL. VeilPay parses the ephemeral key from the hash, scans the Umbra pool for the matching UTXO, and presents a <strong>Claim</strong> button. On click:</P>
-            <ol style={{ listStyle: "none", padding: 0, margin: "0 0 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-              {[
-                "UTXO is claimed into the ephemeral encrypted balance (relayer pays fees).",
-                "Encrypted balance is withdrawn to the recipient's public ATA.",
-                "Link is marked claimed in the database.",
-              ].map((s, i) => (
-                <li key={i} className="flex gap-2">
-                  <span className="text-[#00b3ff] font-bold shrink-0">{i + 1}.</span>
-                  {s}
-                </li>
-              ))}
-            </ol>
+          <H3>Configure environment</H3>
+          <P>Copy the example env file and fill in your values:</P>
+          <Code lang="bash" code={`cp .env.example .env.local`} />
+          <Code lang="bash" code={`# .env.local
+NEXT_PUBLIC_NETWORK=devnet
+NEXT_PUBLIC_RPC_URL=https://api.devnet.solana.com
+NEXT_PUBLIC_RPC_WS_URL=wss://api.devnet.solana.com
 
-            <H3>Wallet-locked links</H3>
-            <P>
-              Optionally enter a recipient wallet address when creating. The claim page will verify via <IC>signMessage</IC> that the claiming wallet matches — adding an extra security layer for high-value transfers.
-            </P>
+# Umbra services (auto-selected by NEXT_PUBLIC_NETWORK if omitted)
+NEXT_PUBLIC_UMBRA_RELAYER_URL=https://relayer.api-devnet.umbraprivacy.com
+NEXT_PUBLIC_UMBRA_INDEXER_URL=/api/indexer-proxy   # proxied — do not change
 
-            <H3>Supported tokens</H3>
-            <div className="grid grid-cols-3 gap-2 my-4">
-              {[
-                ["SOL", "Native Solana"],
-                ["USDC", "USD Coin"],
-                ["USDT", "Tether"],
-                ["BONK", "Bonk"],
-                ["JUP", "Jupiter"],
-                ["WIF", "dogwifhat"],
-              ].map(([sym, name]) => (
-                <div key={sym} className="bg-black/[0.03] border border-black/[0.07] rounded-xl px-3 py-2 text-center">
-                  <p className="text-xs font-bold text-gray-900">{sym}</p>
-                  <p className="text-[10px] text-black/35">{name}</p>
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key   # server-side only
+
+# Link expiry
+NEXT_PUBLIC_LINK_EXPIRY_DAYS=7`} />
+
+          <H3>Create the Supabase table</H3>
+          <Code lang="sql" code={`create table links (
+  id           text primary key,
+  amount       text not null,
+  token        text not null,
+  amount_raw   text not null,
+  decimals     int  not null,
+  created_at   timestamptz not null,
+  expires_at   timestamptz not null,
+  claimed      boolean not null default false,
+  locked_to    text,
+  claimed_by   text,
+  claimed_at   timestamptz
+);
+alter table links enable row level security;
+create policy "Public read" on links for select using (true);`} />
+
+          <H3>Start the dev server</H3>
+          <Code lang="bash" code={`npm run dev
+# → http://localhost:3000`} />
+          <Note>The first time you create a link the browser downloads ~100 MB of ZK circuit files (<IC c=".zkey" /> + <IC c=".wasm" />). They are cached in the browser's Cache Storage under <IC c="veilpay-zk-v2" /> and never re-downloaded.</Note>
+
+          {/* ── Supported Tokens ── */}
+          <SH id="tokens" tag="Get Started">Supported Tokens</SH>
+          <P>VeilPay supports SOL and five SPL tokens. All SPL tokens use their mainnet mint addresses — devnet SOL-only.</P>
+          <Table
+            head={["Symbol", "Name", "Decimals", "Mainnet Mint", "Status"]}
+            rows={[
+              ["SOL",  "Solana",      "9", "So1111…1112", <Badge label="Devnet + Mainnet" color="green" />],
+              ["USDC", "USD Coin",    "6", "EPjFWd…Dt1v", <Badge label="Mainnet only" color="amber" />],
+              ["USDT", "Tether USD",  "6", "Es9vMF…NYB",  <Badge label="Mainnet only" color="amber" />],
+              ["BONK", "Bonk",        "5", "DezXAZ…B263", <Badge label="Mainnet only" color="amber" />],
+              ["JUP",  "Jupiter",     "6", "JUPyiw…vCN",  <Badge label="Mainnet only" color="amber" />],
+              ["WIF",  "dogwifhat",   "6", "EKpQGS…cjm",  <Badge label="Mainnet only" color="amber" />],
+            ]}
+          />
+          <Warn>Sending SPL tokens on devnet will always fail with "insufficient balance" — devnet nodes do not mirror mainnet token accounts. Test SPL flows on mainnet or a mainnet fork.</Warn>
+
+          {/* ── How Umbra Works ── */}
+          <SH id="how-umbra" tag="Concepts">How Umbra Works</SH>
+          <P>Umbra is a privacy protocol on Solana that provides a shared <strong>shielded pool</strong>. Funds enter the pool as encrypted commitments and leave from unlinkable addresses. The privacy comes from four cryptographic layers:</P>
+
+          <div className="dc-concept-grid">
+            {[
+              { label: "ZK Proofs", sub: "Groth16", desc: "Every UTXO claim requires a valid Groth16 proof that the claimant knows the secret randomness and owns the right key — without revealing either." },
+              { label: "Poseidon Hashing", sub: "Commitment scheme", desc: "UTXOs are stored as Poseidon hashes of (amount, recipient_x25519, secret_randomness). Only the hash touches the chain." },
+              { label: "Arcium MPC", sub: "Encrypted balances", desc: "The encrypted balance uses Arcium's multi-party computation network to hold token amounts in a ciphertext only you can read." },
+              { label: "X25519 Keys", sub: "ECDH discovery", desc: "Each account has an X25519 keypair registered on-chain. Senders encrypt UTXO details to the recipient's public key so only they can scan and find it." },
+            ].map(c => (
+              <div key={c.label} className="dc-concept-card glass">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                  <strong style={{ fontSize: 13.5, fontWeight: 600 }}>{c.label}</strong>
+                  <span style={{ fontSize: 10, color: "var(--vp-sky-deep)", background: "rgba(0,179,255,0.08)", border: "0.5px solid rgba(0,179,255,0.2)", padding: "2px 8px", borderRadius: 999, fontWeight: 600 }}>{c.sub}</span>
                 </div>
-              ))}
-            </div>
-            <Note>On devnet, only SOL is natively tradeable. All other tokens use mainnet mint addresses and require mainnet for actual transfers.</Note>
+                <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: 0, lineHeight: 1.55 }}>{c.desc}</p>
+              </div>
+            ))}
+          </div>
 
-            {/* ─── Confidential Transfers ────────────────────────────────────── */}
-            <H2 id="confidential">Confidential Transfers</H2>
-            <P>
-              Confidential transfers move tokens directly from your public wallet into the recipient&apos;s Umbra encrypted balance. The amount is encrypted on-chain via Arcium MPC; only the sender/recipient relationship is visible (the transaction shows your address and the recipient&apos;s Umbra PDA).
-            </P>
+          <H3>The shielded pool as anonymity set</H3>
+          <P>Privacy is proportional to the pool&apos;s anonymity set — the number of active UTXOs. When your UTXO leaves the pool alongside thousands of others, a passive observer cannot determine which withdrawal corresponds to which deposit. VeilPay uses a single shared pool for all tokens and all users, maximising this set.</P>
 
-            <H3>When to use</H3>
-            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-              {[
-                "You know the recipient's Solana address and they have a VeilPay account.",
-                "You want to hide the transfer amount but don't need full anonymity.",
-                "Simpler UX: no link generated, no claim step — funds arrive instantly.",
-              ].map((s, i) => (
-                <li key={i} className="flex gap-2"><span className="text-[#00b3ff] shrink-0">•</span>{s}</li>
-              ))}
-            </ul>
+          <H3>Umbra program architecture</H3>
+          <Steps items={[
+            ["User registration",      "Each user registers two X25519 keys on-chain (user-account key + master-viewing key). A ZK proof binds the Ed25519 wallet key to the X25519 keys."],
+            ["Deposit (UTXO creation)", "The sender calls the Umbra program to insert a commitment into the indexed Merkle tree. The UTXO is addressed to the recipient&apos;s X25519 public key."],
+            ["UTXO scanning",           "The recipient's client decrypts incoming UTXOs using their X25519 private key via the indexer's ciphertext discovery mechanism."],
+            ["Claim (nullifier spend)", "A ZK proof is generated proving knowledge of the UTXO's secret randomness. The nullifier is burned on-chain (double-spend prevention), and the balance enters the encrypted account."],
+            ["Withdrawal",              "The encrypted balance is moved to the user's public ATA via an Arcium MPC decryption and on-chain token transfer."],
+          ]} />
 
-            <H3>How it works</H3>
-            <P>
-              VeilPay calls <IC>getPublicBalanceToEncryptedBalanceDirectDepositorFunction</IC> from the Umbra SDK with the recipient's address. The Umbra program triggers an Arcium MPC computation that encrypts the token amount into the recipient&apos;s <IC>EncryptedTokenAccount</IC> PDA.
-            </P>
-            <Warn>Recipient must have connected to VeilPay at least once so their Umbra account PDAs are initialised on-chain. The transfer will fail otherwise.</Warn>
+          {/* ── UTXOs ── */}
+          <SH id="utxos" tag="Concepts">UTXOs &amp; the Mixer</SH>
+          <P>A UTXO (<strong>Unspent Transaction Output</strong>) in Umbra is a cryptographic commitment representing the right to claim a specific amount of tokens — without publicly linking that right to who created it.</P>
 
-            {/* ─── x402 Payments ─────────────────────────────────────────────── */}
-            <H2 id="x402">Private x402 Payments</H2>
-            <P>
-              The <a href="https://x402.org" className="text-[#00b3ff] hover:underline" target="_blank" rel="noopener noreferrer">x402 protocol</a> extends HTTP with a <IC>402 Payment Required</IC> response that carries machine-readable payment instructions. VeilPay implements x402 using Umbra stealth deposits — so the payment is not just metered but also private.
-            </P>
+          <H3>What a UTXO encodes</H3>
+          <P>Each UTXO is the Poseidon hash of three private values:</P>
+          <Code lang="text" code={`commitment = Poseidon(
+  amount,             // token quantity (u64)
+  recipient_x25519,   // recipient's curve25519 public key (32 bytes)
+  secret_randomness   // 32 bytes of entropy known only to the depositor
+)`} />
+          <P>Only the <IC c="commitment" /> is stored on-chain. The inputs remain private and are transmitted to the recipient encrypted via ECDH over the recipient&apos;s X25519 key.</P>
 
-            <H3>Protocol flow</H3>
-            <ol style={{ listStyle: "none", padding: 0, margin: "0 0 16px", display: "flex", flexDirection: "column", gap: 8 }}>
-              {[
-                ["Client requests", "Client sends GET/POST to a protected endpoint."],
-                ["Server responds 402", "Server replies with an invoice: amount, token, destination address, and a 32-byte invoiceId."],
-                ["Client deposits", "Client makes an Umbra stealth deposit to the server's Umbra address, embedding the invoiceId in the proof instruction's optional-data field."],
-                ["Client presents proof", "Client sends Authorization: x402 <proofTxSig>:<depositTxSig>:<invoiceIdHex>."],
-                ["Server verifies", "Server decrypts the proof instruction payload via ECDH + Keccak-256 + AES-256-GCM, checks amount ≥ expected, destination = server address, invoiceId = issued invoice. Records deposit sig to prevent replay."],
-                ["Server responds 200", "Content or API response is returned."],
-              ].map(([title, desc], i) => (
-                <li key={i} className="flex gap-2">
-                  <span className="text-[#00b3ff] font-bold shrink-0">{i + 1}.</span>
-                  <span><strong className="text-gray-800">{title}</strong> — {desc}</span>
-                </li>
-              ))}
-            </ol>
+          <H3>The indexed Merkle tree</H3>
+          <P>Umbra stores commitments in an <strong>Indexed Merkle Tree</strong> — a binary Merkle tree where each leaf is a UTXO commitment. The tree root is stored on-chain and updated with each new deposit. The indexer tracks all leaves and provides Merkle proofs needed for ZK claims.</P>
+          <UL items={[
+            "Tree capacity: 2²⁰ leaves per tree (~1 million UTXOs). New trees are created as capacity is filled.",
+            "Leaves are inserted sequentially — insertion order provides a privacy hint but not a direct link.",
+            "The indexer exposes a read-only gRPC API for scanning UTXOs by X25519 key.",
+          ]} />
 
-            <H3>Authorization header format</H3>
-            <CodeBlock lang="http" code={`Authorization: x402 <proofTxSignature>:<depositTxSignature>:<invoiceIdHex>`} />
+          <H3>Nullifiers: preventing double-spends</H3>
+          <P>When a UTXO is claimed, the ZK proof includes the <IC c="nullifier" /> — a deterministic hash derived from the UTXO&apos;s secret randomness and the claimant&apos;s key. The program burns the nullifier on-chain (writes it to a <IC c="NullifierAccount" /> PDA). Any attempt to re-claim the same UTXO produces the same nullifier and is rejected with error <IC c="0x6d64 NullifierAlreadyBurnt" />.</P>
 
-            <H3>Invoice payload</H3>
-            <CodeBlock lang="json" code={`{
+          <H3>Ciphertext discovery (scanning)</H3>
+          <P>Each UTXO&apos;s plaintext (amount + secret) is encrypted to the recipient&apos;s X25519 public key using ECDH + AES-256-GCM. The ciphertext is stored in the indexer alongside the commitment. The recipient fetches ciphertexts from the indexer and trial-decrypts them with their X25519 private key. A successful decryption reveals the amount and secret randomness needed to build the claim proof.</P>
+
+          <H3>Receiver-claimable UTXOs vs. encrypted balance UTXOs</H3>
+          <Table
+            head={["Type", "Who can claim", "Requires ZK proof?", "Used in"]}
+            rows={[
+              ["Receiver-claimable",  "Anyone with the ephemeral private key", "Yes (Groth16)",    "Private payment links"],
+              ["Encrypted balance",   "The registered account holder only",   "No (direct MPC)",  "Confidential transfers, shield"],
+            ]}
+          />
+
+          {/* ── Encrypted Balances ── */}
+          <SH id="enc-bal" tag="Concepts">Encrypted Balances</SH>
+          <P>An <strong>Encrypted Balance</strong> is a per-token, per-user ciphertext stored in a PDA (<IC c="EncryptedTokenAccount" />) on-chain. Only the account owner can decrypt it using their X25519 private key in combination with Arcium&apos;s MPC network.</P>
+
+          <H3>Arcium MPC</H3>
+          <P>Arcium is a multiparty computation (MPC) network built on Solana. When your encrypted balance changes — via a deposit, claim, or withdrawal — the Umbra program emits an Arcium computation request. The Arcium nodes collectively evaluate an arithmetic circuit over the ciphertext, updating the balance without any node learning the plaintext amount.</P>
+          <P>Key properties:</P>
+          <UL items={[
+            "No single Arcium node can decrypt the balance — threshold security requires collusion of a supermajority.",
+            "The balance update is verified on-chain via a succinct proof from the Arcium prover.",
+            "The Umbra relayer pays Arcium computation fees on the user's behalf — users pay only Solana transaction fees.",
+          ]} />
+
+          <H3>Balance states</H3>
+          <P>The encrypted balance SDK returns one of three states:</P>
+          <Table
+            head={["State", "Meaning", "Can withdraw?"]}
+            rows={[
+              [<IC c="none" />,    "Account PDA not yet initialised — no deposits received.", "No"],
+              [<IC c="mxe" />,     "Arcium computation in progress — balance updating.", "No (wait ~30s)"],
+              [<IC c="shared" />,  "Balance settled and ready.", "Yes"],
+            ]}
+          />
+
+          <H3>Viewing keys</H3>
+          <P>The <strong>Master Viewing Key</strong> (MVK) is an X25519 keypair derived from the wallet&apos;s master seed. It is registered on-chain during account setup. Anyone holding the MVK can decrypt all incoming ciphertexts for that account — but cannot sign transactions or move funds. This enables selective disclosure to auditors without granting custody.</P>
+          <Note>The VeilPay Audit tab lets you paste a claim URL hash and inspect the UTXO status — pending, in-transit, or delivered — without connecting a wallet.</Note>
+
+          {/* ── Private Payment Links ── */}
+          <SH id="links" tag="Features">Private Payment Links</SH>
+          <P>Private links let a sender create a one-time claimable payment in the shielded pool. No recipient wallet address is needed at creation time — you share the URL and they claim it later from any device.</P>
+
+          <H3>How it works</H3>
+          <Steps items={[
+            ["Generate ephemeral keypair",  "A fresh Ed25519 keypair is generated in-browser. The private key never touches the server."],
+            ["Fund ephemeral",              <>0.02 SOL is sent from the sender to the ephemeral address to cover Umbra registration rent (<IC c="EPHEMERAL_SOL_BUFFER" />).</>],
+            ["Register ephemeral",          "The ephemeral address is registered with the Umbra program (X25519 keys on-chain, one ZK registration proof)."],
+            ["Create receiver-claimable UTXO", "The sender deposits funds into the Umbra Merkle tree, addressed to the ephemeral key."],
+            ["Encode URL",                  <>The ephemeral private key + token are base58-encoded into the URL hash: <IC c="/claim?lid=…&exp=…#<bs58Key>:<TOKEN>" />. The hash never leaves the browser.</>],
+          ]} />
+
+          <H3>Claim flow</H3>
+          <Steps items={[
+            ["Parse URL hash",    "The claim page reads the hash fragment synchronously in useLayoutEffect — before first paint — and immediately clears it from the URL via history.replaceState."],
+            ["Scan the pool",     "The SDK scans the Umbra indexer for UTXOs addressed to the ephemeral X25519 key."],
+            ["Generate ZK proof", "A Groth16 proof is computed in the browser (~15–60 s). ZK circuit files are cached after first download."],
+            ["Claim to encrypted balance", "The relayer broadcasts the ZK claim transaction. The relayer pays fees."],
+            ["Withdraw",          "The ephemeral encrypted balance is swept to the recipient's public ATA."],
+            ["Mark claimed",      "The link is marked claimed in Supabase via a signed PATCH request."],
+          ]} />
+
+          <H3>Wallet-locked links</H3>
+          <P>Optionally restrict claiming to a specific wallet. The claim page verifies the connected wallet matches via <IC c="signMessage" /> and an Ed25519 signature before the claim transaction is submitted. Suitable for high-value, pre-arranged payments.</P>
+
+          <H3>Link expiry</H3>
+          <P>Links expire after <IC c="NEXT_PUBLIC_LINK_EXPIRY_DAYS" /> days (default 7). The expiry is encoded in the URL query string (<IC c="?exp=<ms>" />) and checked client-side before any network call. Expired links show a clear error state.</P>
+
+          {/* ── Confidential Transfers ── */}
+          <SH id="conf" tag="Features">Confidential Transfers</SH>
+          <P>Confidential transfers move tokens from your public wallet directly into a known recipient&apos;s Umbra encrypted balance. The amount is hidden on-chain via Arcium MPC. The transaction records your address and the recipient&apos;s PDA — not their wallet address — so the amount is private but the relationship is visible.</P>
+
+          <H3>When to use confidential transfers vs. private links</H3>
+          <Table
+            head={["", "Private Link", "Confidential Transfer"]}
+            rows={[
+              ["Sender identity",       "Hidden",   "Visible"],
+              ["Recipient identity",    "Hidden",   "Visible (PDA only)"],
+              ["Amount on-chain",       "Hidden",   "Hidden"],
+              ["Recipient needs account", "No",     "Yes — must have VeilPay account"],
+              ["Claim step required",   "Yes",      "No — instant arrival"],
+              ["Best for",              "Fully anonymous sends, tips, anonymous invoices", "Business payments, payroll, recurring known-party sends"],
+            ]}
+          />
+
+          <H3>How it works</H3>
+          <P>VeilPay calls <IC c="getPublicBalanceToEncryptedBalanceDirectDepositorFunction" /> from the Umbra SDK. This creates a deposit transaction that triggers an Arcium MPC computation encrypting the token amount into the recipient&apos;s <IC c="EncryptedTokenAccount" /> PDA.</P>
+          <Warn>The recipient must have connected to VeilPay at least once so their Umbra account PDAs are initialised on-chain. The SDK will throw if they haven't registered.</Warn>
+
+          {/* ── Shield & Unshield ── */}
+          <SH id="shield" tag="Features">Shield &amp; Unshield</SH>
+          <P>Shielding moves tokens from your <strong>public wallet</strong> into your <strong>own encrypted balance</strong>. Unshielding (withdrawal) reverses this — it moves your encrypted balance back to your public ATA. This is useful for accumulating privacy before a transfer, or for converting a public balance to a shielded one without involving another party.</P>
+
+          <H3>Shield flow (public → encrypted)</H3>
+          <Steps items={[
+            ["Check registration",   "VeilPay verifies your Umbra account PDAs exist. If not, it runs a ZK registration (wallet prompts 2–4)."],
+            ["Ensure ATA",           "For SPL tokens, the associated token account is created if missing."],
+            ["Deposit to self",      <>Calls <IC c="getPublicBalanceToEncryptedBalanceDirectDepositorFunction" /> with your own address as recipient. Your public tokens are locked and your encrypted balance increases.</>],
+          ]} />
+          <Note>Shielding SOL requires no ATA — SOL is handled natively. Shielding SPL tokens may trigger one extra wallet prompt to create the token account.</Note>
+
+          <H3>Unshield flow (encrypted → public)</H3>
+          <Steps items={[
+            ["Enter amount",        "From the Dashboard, click Withdraw on any token with a non-zero encrypted balance and enter the amount in the modal."],
+            ["Arcium decryption",   <>VeilPay calls <IC c="getEncryptedBalanceToPublicBalanceDirectWithdrawerFunction" />. Arcium MPC decrements the encrypted balance.</>],
+            ["On-chain transfer",   "The Umbra program transfers tokens from the program's escrow to your public ATA."],
+          ]} />
+
+          <H3>From the Dashboard UI</H3>
+          <P>The Dashboard shows both your <strong>Public Balance</strong> and <strong>Encrypted Balance</strong> side by side for every supported token. Each row has two action buttons:</P>
+          <UL items={[
+            <><strong>Shield</strong> — opens a modal to enter an amount (with MAX button), moves public → encrypted.</>,
+            <><strong>Withdraw</strong> — opens a modal to enter an amount, moves encrypted → public.</>,
+          ]} />
+
+          {/* ── x402 ── */}
+          <SH id="x402" tag="Features">x402 Payments</SH>
+          <P>The <a href="https://x402.org" target="_blank" rel="noopener noreferrer" className="dc-link">x402 protocol</a> extends HTTP with a <IC c="402 Payment Required" /> response carrying machine-readable payment instructions. VeilPay implements x402 using Umbra stealth deposits — so the payment is metered <em>and</em> private.</P>
+
+          <H3>Protocol flow</H3>
+          <Steps items={[
+            ["Request",           "Client sends GET/POST to a protected endpoint."],
+            ["402 response",      <>Server returns a JSON invoice: amount, token, destination address, 32-byte <IC c="invoiceId" />.</>],
+            ["Deposit",           <>Client makes an Umbra stealth deposit to the server&apos;s Umbra address, embedding <IC c="invoiceId" /> in the proof instruction&apos;s optional-data field.</>],
+            ["X-402-Payment header", <>Client retries with <IC c="X-402-Payment: x402 <proofTxSig>:<depositTxSig>:<invoiceIdHex>" />.</>],
+            ["Server verifies",   "Server decrypts the proof payload via ECDH + AES-256-GCM, checks amount ≥ required, destination correct, invoiceId matches, signature not replayed."],
+            ["200 response",      "API content returned."],
+          ]} />
+
+          <H3>Invoice response format</H3>
+          <Code lang="json" code={`HTTP/1.1 402 Payment Required
+Content-Type: application/json
+
+{
   "error": "Payment Required",
   "invoice": {
     "amount": 0.1,
@@ -299,47 +608,24 @@ export default function DocsPage() {
   }
 }`} />
 
-            <H3>Proof instruction AES payload layout</H3>
-            <P>The Umbra proof instruction embeds an AES-256-GCM encrypted payload. After ECDH key exchange, the plaintext has this layout:</P>
-            <CodeBlock lang="text" code={`Bytes  0–7  : amount (little-endian U64)
-Bytes  8–39 : destination address (32 bytes)
-Bytes 40–55 : generation index (16 bytes)
-Bytes 56–67 : domain separator (12 bytes)`} />
+          <H3>Payment header format</H3>
+          <Code lang="http" code={`X-402-Payment: x402 <proofTxSignature>:<depositTxSignature>:<invoiceIdHex>`} />
 
-            {/* ─── SDK ───────────────────────────────────────────────────────── */}
-            <H2 id="sdk">@veilpay/x402-sdk</H2>
-            <P>
-              The <IC>@veilpay/x402-sdk</IC> package gives any Node.js server (Next.js, Express, etc.) a drop-in integration for accepting private x402 payments verified via the Umbra protocol.
-            </P>
+          <H3>Proof instruction AES payload layout</H3>
+          <Code lang="text" code={`Bytes  0– 7 : amount         (little-endian u64)
+Bytes  8–39 : destination     (32-byte address)
+Bytes 40–55 : generation idx  (16 bytes)
+Bytes 56–67 : domain sep.     (12 bytes)`} />
 
-            <H3>Installation</H3>
-            <CodeBlock lang="bash" code={`npm install @veilpay/x402-sdk
+          {/* ── SDK ── */}
+          <SH id="sdk" tag="SDK & Integrations">@veilpay/x402-sdk</SH>
+          <P>Drop-in Node.js package for accepting private x402 payments in any server framework.</P>
 
-# Peer dependencies (install whichever you don't have)
-npm install @solana/web3.js @umbra-privacy/sdk @umbra-privacy/umbra-codama @noble/curves @noble/hashes bs58`} />
+          <H3>Installation</H3>
+          <Code lang="bash" code={`npm install @veilpay/x402-sdk`} />
 
-            <H3>Server setup — Next.js App Router</H3>
-            <CodeBlock lang="typescript" code={`// app/api/premium/route.ts
-import { createX402 } from "@veilpay/x402-sdk";
-import { Connection } from "@solana/web3.js";
-
-const x402 = createX402({
-  network: "mainnet",          // or "devnet"
-  connection: new Connection("https://api.mainnet-beta.solana.com"),
-  serverPrivateKeyBase58: process.env.X402_SERVER_PRIVATE_KEY!,
-  serverSolanaAddress: process.env.NEXT_PUBLIC_X402_SERVER_ADDRESS!,
-});
-
-// Protect a Next.js route handler
-export const GET = x402.nextjs(
-  { amount: 0.1, token: "SOL" },
-  async (req) => {
-    return Response.json({ data: "premium content" });
-  }
-);`} />
-
-            <H3>Server setup — Express</H3>
-            <CodeBlock lang="typescript" code={`import express from "express";
+          <H3>Next.js App Router</H3>
+          <Code lang="typescript" code={`// app/api/premium/route.ts
 import { createX402 } from "@veilpay/x402-sdk";
 import { Connection } from "@solana/web3.js";
 
@@ -347,307 +633,375 @@ const x402 = createX402({
   network: "mainnet",
   connection: new Connection(process.env.RPC_URL!),
   serverPrivateKeyBase58: process.env.X402_SERVER_PRIVATE_KEY!,
-  serverSolanaAddress: process.env.SERVER_ADDRESS!,
+  serverSolanaAddress: process.env.NEXT_PUBLIC_X402_SERVER_ADDRESS!,
 });
 
+export const GET = x402.nextjs(
+  { amount: 0.1, token: "SOL" },
+  async (req) => Response.json({ data: "premium content" })
+);`} />
+
+          <H3>Express</H3>
+          <Code lang="typescript" code={`import express from "express";
+import { createX402 } from "@veilpay/x402-sdk";
+
+const x402 = createX402({ network: "mainnet", connection, serverPrivateKeyBase58: "…", serverSolanaAddress: "…" });
 const app = express();
-app.get(
-  "/premium",
+
+app.get("/premium",
   x402.express({ amount: 0.1, token: "SOL" }),
   (req, res) => res.json({ data: "premium content" })
 );`} />
 
-            <H3>Client — making a payment</H3>
-            <CodeBlock lang="typescript" code={`import { x402Fetch } from "@veilpay/x402-sdk";
+          <H3>Client — automatic payment</H3>
+          <Code lang="typescript" code={`import { x402Fetch } from "@veilpay/x402-sdk";
 
-// x402Fetch wraps the native fetch API.
-// On a 402 response it automatically creates an Umbra stealth deposit,
-// then retries the request with the Authorization header.
-const response = await x402Fetch("https://yourapp.com/api/premium", {
-  wallet,      // Wallet Standard wallet object
-  account,     // WalletAccount
+// On a 402 response, x402Fetch automatically creates an Umbra deposit
+// and retries with the X-402-Payment header.
+const res = await x402Fetch("https://yourapp.com/api/premium", {
+  wallet,    // Wallet Standard Wallet
+  account,   // WalletAccount
   network: "mainnet",
 });
+const data = await res.json();`} />
 
-const data = await response.json();`} />
-
-            <H3>Manual verification</H3>
-            <CodeBlock lang="typescript" code={`import { createX402, MemoryReplayStore } from "@veilpay/x402-sdk";
-
-const x402 = createX402({
-  network: "mainnet",
-  connection,
-  serverPrivateKeyBase58: process.env.X402_SERVER_PRIVATE_KEY!,
-  serverSolanaAddress: process.env.SERVER_ADDRESS!,
-  replayStore: new MemoryReplayStore(), // swap for Redis/Postgres in production
-});
-
-// Parse the Authorization header
-const payment = x402.parseAuthHeader(req.headers.get("Authorization"));
-if (!payment) return new Response("Missing payment", { status: 402 });
-
-// Verify on-chain
-const outcome = await x402.verify(payment, 0.1, "SOL");
-if (!outcome.valid) return new Response(outcome.reason, { status: 403 });
-
-// All good — serve the resource`} />
-
-            <H3>Replay protection</H3>
-            <P>
-              The SDK includes a <IC>ReplayStore</IC> interface. The default <IC>MemoryReplayStore</IC> works for single-instance servers. For distributed deployments, implement the interface with Redis or Postgres:
-            </P>
-            <CodeBlock lang="typescript" code={`import type { ReplayStore } from "@veilpay/x402-sdk";
-import { Redis } from "ioredis";
+          <H3>Replay protection — Redis store</H3>
+          <Code lang="typescript" code={`import type { ReplayStore } from "@veilpay/x402-sdk";
 
 class RedisReplayStore implements ReplayStore {
   constructor(private redis: Redis) {}
-
-  async has(depositSig: string): Promise<boolean> {
-    return (await this.redis.exists(\`x402:seen:\${depositSig}\`)) === 1;
+  async has(sig: string): Promise<boolean> {
+    return (await this.redis.exists(\`x402:seen:\${sig}\`)) === 1;
   }
-
-  async add(depositSig: string): Promise<void> {
-    // Store with 30-day TTL
-    await this.redis.setex(\`x402:seen:\${depositSig}\`, 60 * 60 * 24 * 30, "1");
+  async add(sig: string): Promise<void> {
+    await this.redis.setex(\`x402:seen:\${sig}\`, 86400 * 30, "1");
   }
-}`} />
+}
 
-            <H3>API reference</H3>
-            <div className="overflow-x-auto my-4">
-              <table className="w-full text-xs border-collapse">
-                <thead>
-                  <tr className="bg-black/[0.04] border-b border-black/[0.08]">
-                    {["Function", "Description"].map((h) => <th key={h} className="text-left px-3 py-2 font-semibold text-gray-700">{h}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    ["createX402(config)", "Factory. Returns an X402Instance configured for your server."],
-                    ["x402.generateInvoice(amount, token)", "Returns a fresh {invoiceId, invoiceIdHex} pair. Server-issued only."],
-                    ["x402.verify(payment, amount, token)", "Fully verifies an x402 payment on-chain. Returns {valid, reason}."],
-                    ["x402.parseAuthHeader(header)", "Parses Authorization: x402 … into an X402Payment object or null."],
-                    ["x402.nextjs(opts, handler)", "Wraps a Next.js App Router handler with x402 protection."],
-                    ["x402.express(opts)", "Returns an Express middleware that enforces x402 payment."],
-                    ["x402.handle(req, opts, handler)", "Framework-agnostic: works with any fetch-compatible Request."],
-                    ["x402Fetch(url, opts)", "Client helper — auto-pays 402 responses via Umbra deposit."],
-                    ["new MemoryReplayStore()", "In-memory replay protection (single instance only)."],
-                  ].map(([fn, desc]) => (
-                    <tr key={fn} className="border-b border-black/[0.05] hover:bg-black/[0.02]">
-                      <td className="px-3 py-2 font-mono text-[11px] text-gray-800">{fn}</td>
-                      <td className="px-3 py-2 text-black/50">{desc}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+const x402 = createX402({ …, replayStore: new RedisReplayStore(redis) });`} />
 
-            {/* ─── VeilPay Skill ─────────────────────────────────────────────── */}
-            <H2 id="skill">VeilPay Agent Skill</H2>
-            <P>
-              The VeilPay agent skill lets any AI agent make and receive private payments on Solana — fully autonomously, with no browser or wallet popup. The agent signs transactions directly with its own keypair. All operations run in Node.js, including ZK proof generation.
-            </P>
+          <H3>API reference</H3>
+          <Table
+            head={["Function", "Description"]}
+            rows={[
+              [<IC c="createX402(config)" />,              "Factory. Returns an X402Instance for your server."],
+              [<IC c="x402.nextjs(opts, handler)" />,      "Wraps a Next.js App Router handler with x402 enforcement."],
+              [<IC c="x402.express(opts)" />,               "Returns an Express middleware."],
+              [<IC c="x402.handle(req, opts, handler)" />,  "Framework-agnostic handler (fetch-compatible Request)."],
+              [<IC c="x402.verify(payment, amount, token)" />, "Fully verifies an x402 payment. Returns { valid, reason }."],
+              [<IC c="x402.generateInvoice(amt, token)" />, "Returns a fresh { invoiceId, invoiceIdHex } pair."],
+              [<IC c="x402.parseAuthHeader(header)" />,     "Parses X-402-Payment header → X402Payment | null."],
+              [<IC c="x402Fetch(url, opts)" />,             "Client helper — auto-pays 402 responses."],
+              [<IC c="new MemoryReplayStore()" />,          "In-memory replay store. Single-instance only."],
+            ]}
+          />
 
-            <H3>Install</H3>
-            <CodeBlock lang="bash" code={`npx skills add Bmzennn/agent-skills@veilpay`} />
+          {/* ── Agent Skill ── */}
+          <SH id="skill" tag="SDK & Integrations">VeilPay Agent Skill</SH>
+          <P>The VeilPay agent skill lets AI agents create and claim private payment links fully autonomously — no browser, no wallet popup. The agent signs transactions with its own stored keypair. ZK proofs run locally in Node.js.</P>
 
-            <H3>Capabilities</H3>
-            <div style={{ overflowX: "auto", margin: "16px 0" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                <thead>
-                  <tr style={{ borderBottom: "1px solid var(--hairline-strong)" }}>
-                    {["Script", "What it does"].map((h) => (
-                      <th key={h} style={{ textAlign: "left", padding: "8px 12px", color: "var(--ink-3)", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    ["wallet.cjs create", "Generate a persistent agent Solana keypair"],
-                    ["create-link.cjs", "Deposit to pool, return a shareable claim URL"],
-                    ["claim-link.cjs", "Paste a link → funds arrive in the agent's wallet"],
-                    ["check-link.cjs", "pending / claimed / delivered / not_found"],
-                    ["balance.cjs", "Query encrypted shielded balance"],
-                  ].map(([script, desc]) => (
-                    <tr key={script} style={{ borderBottom: "1px solid var(--hairline)" }}>
-                      <td style={{ padding: "10px 12px", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--vp-sky-deep)" }}>{script}</td>
-                      <td style={{ padding: "10px 12px", color: "var(--ink-2)" }}>{desc}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <H3>Install</H3>
+          <Code lang="bash" code={`npx skills add Bmzennn/agent-skills@veilpay`} />
 
-            <H3>1. Agent setup</H3>
-            <CodeBlock lang="bash" code={`# Create a persistent agent wallet (saved to ~/.veilpay/wallet.json)
-node scripts/wallet.cjs create
-
-# Fund it with SOL for fees (devnet)
-node scripts/wallet.cjs airdrop
-
-# Check balance
+          <H3>Agent setup</H3>
+          <Code lang="bash" code={`node scripts/wallet.cjs create    # generate wallet → ~/.veilpay/wallet.json
+node scripts/wallet.cjs airdrop   # request devnet SOL
 node scripts/wallet.cjs balance`} />
 
-            <H3>2. Create a private payment link</H3>
-            <P>The agent generates an ephemeral keypair, funds it, runs two ZK registration proofs, deposits funds into the Umbra pool, and returns a claim URL — all without any user interaction.</P>
-            <CodeBlock lang="bash" code={`node scripts/create-link.cjs \\
-  --amount 1.5 \\
-  --token SOL \\
-  --network devnet \\
-  --memo "Payment for task #42"`} />
-            <CodeBlock lang="text" code={`[1/4] Generating ephemeral keypair…
-[2/4] Funding ephemeral for registration fees…
+          <H3>Create a payment link</H3>
+          <Code lang="bash" code={`node scripts/create-link.cjs --amount 1.5 --token SOL --network devnet`} />
+          <Code lang="text" code={`[1/4] Generating ephemeral keypair…
+[2/4] Funding ephemeral…
 [3/4] Registering privacy channels (ZK proofs)…
 [4/4] Depositing into shielded pool…
 
-✅ Private link created!
-   Link:    https://www.veilpayments.xyz/claim?lid=...#<secret>:SOL:Payment%20for%20task%20%2342
-   Amount:  1.5 SOL
-   Expires: 2026-05-03`} />
-            <Note>Link creation requires ~0.02 SOL extra for the ephemeral registration buffer. This SOL is recovered by the recipient when they claim.</Note>
+✅ Link: https://veilpay.xyz/claim?lid=…#<secret>:SOL
+   Amount: 1.5 SOL  |  Expires: 7 days`} />
 
-            <H3>3. Claim a payment link</H3>
-            <P>An agent that receives a VeilPay link can claim it directly to its own wallet — no browser, no human approval. The full Groth16 ZK proof is generated locally in Node.js.</P>
-            <CodeBlock lang="bash" code={`node scripts/claim-link.cjs \\
-  --link "https://www.veilpayments.xyz/claim?lid=...#<secret>:SOL" \\
-  --network devnet`} />
-            <CodeBlock lang="text" code={`[1/5] Scanning shielded pool…
-      Found: 1.5 SOL
-[2/5] Generating ZK proof (this takes 20–60s)…
-      Downloading claimreceiverclaimableutxo.zkey (cached after first run)… done
-[3/5] Waiting for on-chain ZK verification…
-      Verified ✓
+          <H3>Claim a link</H3>
+          <Code lang="bash" code={`node scripts/claim-link.cjs --link "https://veilpay.xyz/claim?lid=…#<secret>:SOL"`} />
+          <Code lang="text" code={`[1/5] Scanning pool… Found 1.5 SOL
+[2/5] Generating ZK proof (~20–60s, cached after first run)…
+[3/5] On-chain ZK verification… ✓
 [4/5] Preparing token account…
-[5/5] Withdrawing to your wallet…
+[5/5] Withdrawing to wallet…
 
-✅ Claimed successfully!
-   Amount:    1.5 SOL
-   Delivered: 7xKt...9mPq`} />
-            <Note>ZK circuit files (~100MB) are downloaded on first claim and cached in <IC>~/.veilpay/zk-cache/</IC>. Subsequent claims use the cache and take seconds less.</Note>
+✅ Claimed: 1.5 SOL → 7xKt…9mPq`} />
+          <Note>ZK circuit files (~100 MB) are cached at <IC c="~/.veilpay/zk-cache/" /> after the first claim. Subsequent claims skip the download.</Note>
 
-            <H3>4. Check link status</H3>
-            <CodeBlock lang="bash" code={`node scripts/check-link.cjs \\
-  --link "https://www.veilpayments.xyz/claim?lid=...#<secret>:SOL"`} />
-            <CodeBlock lang="text" code={`Status: pending     # funds in pool, not yet claimed
-Status: claimed     # ZK proof accepted, sweep in progress
-Status: delivered   # funds in recipient's wallet
-Status: not_found   # expired or already swept`} />
+          <H3>Why no browser required</H3>
+          <P>The browser version uses Phantom for signing because browsers cannot safely hold raw private keys. An agent has no such constraint — it uses <IC c="createSignerFromPrivateKeyBytes" /> from the Umbra SDK directly. The ZK prover runs in Node.js with local circuit files, producing identical proofs to the browser version.</P>
+          <Warn>Store the agent wallet with <IC c="chmod 600 ~/.veilpay/wallet.json" />. Never commit it to version control.</Warn>
 
-            <H3>5. Check encrypted balance</H3>
-            <P>If the agent received a confidential transfer (direct send), the balance waits in its encrypted Umbra account:</P>
-            <CodeBlock lang="bash" code={`node scripts/balance.cjs --network devnet`} />
-            <CodeBlock lang="text" code={`Encrypted balances for 7xKt...9mPq on devnet:
-  USDC   42.00  ← withdraw with: node withdraw.cjs --token USDC`} />
+          {/* ── Security Model ── */}
+          <SH id="security" tag="Security">Security Model</SH>
 
-            <H3>Environment variables</H3>
-            <CodeBlock lang="bash" code={`VEILPAY_NETWORK=devnet           # devnet or mainnet
-VEILPAY_RPC_URL=https://...      # optional custom RPC
-VEILPAY_WALLET_PATH=~/.veilpay/wallet.json`} />
+          <H3>Claim note protection</H3>
+          <P>The ephemeral private key lives only in the URL hash. VeilPay clears it from the URL via <IC c="window.history.replaceState" /> in <IC c="useLayoutEffect" /> — synchronously before first paint — minimising the window in which browser extensions can observe it.</P>
+          <P>Three runtime protections guard the link display:</P>
+          <UL items={[
+            <><strong>Blur by default</strong> — the key is blurred until the user clicks Reveal.</>,
+            <><strong>Focus-loss re-blur</strong> — the key re-blurs immediately if the window loses focus (tab switch, screen share, alt-tab).</>,
+            <><strong>15-second auto-hide</strong> — a live countdown re-blurs the key after 15 s. The user must re-click to reveal again.</>,
+          ]} />
 
-            <H3>How it works — no browser required</H3>
-            <P>
-              The browser version of VeilPay uses Phantom to sign transactions because browsers cannot safely hold raw private keys. An agent has no such constraint — it loads its keypair from <IC>~/.veilpay/wallet.json</IC> and uses <IC>createSignerFromPrivateKeyBytes</IC> from the Umbra SDK directly. The ZK prover (<IC>@umbra-privacy/web-zk-prover</IC>) runs in Node.js with circuit files stored locally, producing identical proofs to the browser version.
-            </P>
-            <Warn>The agent wallet private key is stored unencrypted at <IC>~/.veilpay/wallet.json</IC>. Restrict file permissions (<IC>chmod 600</IC>) and never commit it to version control.</Warn>
+          <H3>Clipboard hijack detection</H3>
+          <P>Malicious extensions sometimes overwrite <IC c="navigator.clipboard.writeText" /> to silently replace copied addresses. VeilPay detects this by checking <IC c="Function.prototype.toString" /> on the clipboard method — extensions that override it typically do not also spoof the native-code signature. If tampering is detected, the Copy button is disabled and an amber warning is shown; the OS-level Web Share API remains available.</P>
 
-            {/* ─── Security Model ─────────────────────────────────────────────── */}
-            <H2 id="security">Security Model</H2>
+          <H3>Server-side security</H3>
+          <UL items={[
+            <>All POST/PATCH requests to <IC c="/api/links" /> require an Ed25519 signature from the sender&apos;s wallet, verified server-side with <IC c="@noble/curves/ed25519" />.</>,
+            "Signatures include a Unix timestamp — requests older than 5 minutes are rejected (replay protection).",
+            "Rate limiting: 20 link creations per IP per minute.",
+            "Supabase Row Level Security is enforced — the database is append-only for the anon key; only the service-role key can mark links claimed.",
+            "The service-role key is server-side only (no NEXT_PUBLIC_ prefix) and is never sent to the browser.",
+          ]} />
 
-            <H3>Privacy guarantees</H3>
-            <div className="overflow-x-auto my-4">
-              <table className="w-full text-xs border-collapse">
-                <thead>
-                  <tr className="bg-black/[0.04] border-b border-black/[0.08]">
-                    {["Feature", "Sender visible?", "Recipient visible?", "Amount visible?"].map((h) => <th key={h} className="text-left px-3 py-2 font-semibold text-gray-700">{h}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    ["Private Link", "No", "No", "No"],
-                    ["Confidential Transfer", "Yes", "Yes (PDA)", "No"],
-                    ["x402 Payment", "Partially", "Server only", "No"],
-                  ].map(([f, s, r, a]) => (
-                    <tr key={f} className="border-b border-black/[0.05]">
-                      <td className="px-3 py-2 font-medium text-gray-800">{f}</td>
-                      <td className={`px-3 py-2 ${s === "No" ? "text-emerald-600" : "text-amber-600"}`}>{s}</td>
-                      <td className={`px-3 py-2 ${r === "No" ? "text-emerald-600" : "text-amber-600"}`}>{r}</td>
-                      <td className={`px-3 py-2 ${a === "No" ? "text-emerald-600" : "text-amber-600"}`}>{a}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          {/* ── Privacy Guarantees ── */}
+          <SH id="privacy" tag="Security">Privacy Guarantees</SH>
+          <P>What VeilPay can and cannot hide:</P>
+          <Table
+            head={["Property", "Private Links", "Confidential Transfers", "x402"]}
+            rows={[
+              ["Sender identity",      <Badge label="Hidden" color="green" />, <Badge label="Visible" color="amber" />, <Badge label="Partial" color="amber" />],
+              ["Recipient identity",   <Badge label="Hidden" color="green" />, <Badge label="PDA only" color="amber" />, <Badge label="Server only" color="amber" />],
+              ["Transfer amount",      <Badge label="Hidden" color="green" />, <Badge label="Hidden" color="green" />, <Badge label="Hidden" color="green" />],
+              ["Transfer time",        <Badge label="Visible" color="red" />,  <Badge label="Visible" color="red" />,  <Badge label="Visible" color="red" />],
+              ["Token type",           <Badge label="Visible" color="red" />,  <Badge label="Visible" color="red" />,  <Badge label="Visible" color="red" />],
+              ["Link to existing balance", <Badge label="No link" color="green" />, <Badge label="PDA linked" color="amber" />, <Badge label="No link" color="green" />],
+            ]}
+          />
+          <Note>Transaction timing and token type are always visible on-chain. For maximum privacy, avoid patterns that make timing-correlation attacks trivial (e.g. depositing and withdrawing the exact same amount within minutes of each other).</Note>
 
-            <H3>Claim note security</H3>
-            <P>The ephemeral private key (claim note) lives only in the URL hash. The hash is never sent to the server by the browser. VeilPay clears it from the URL via <IC>window.history.replaceState</IC> synchronously on page load (<IC>useLayoutEffect</IC>, before first paint), minimising the window in which browser extensions could observe it.</P>
 
-            <H3>Client-side link protection</H3>
-            <P>
-              Because the claim key is displayed in the browser, VeilPay implements three runtime protections on the link display:
-            </P>
-            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 16px", display: "flex", flexDirection: "column", gap: 8 }}>
-              {[
-                ["Blur by default", "The URL hash (claim key) is blurred until the user explicitly clicks Reveal. The public domain and path are always visible; only the secret fragment is hidden."],
-                ["Auto-hide on focus loss", "If the browser window loses focus while the key is revealed — switching tabs, alt-tab, or a remote desktop session grabbing the screen — the key is immediately re-blurred. This limits exposure from screen-share observers."],
-                ["15-second reveal timer", "The key automatically re-blurs 15 seconds after reveal, with a live countdown. Users must re-click to reveal again."],
-              ].map(([title, desc]) => (
-                <li key={title as string} className="flex gap-2">
-                  <span className="text-[#00b3ff] shrink-0 mt-0.5">→</span>
-                  <span><strong className="text-gray-800">{title}</strong> — {desc}</span>
-                </li>
-              ))}
-            </ul>
-
-            <H3>Clipboard hijack detection</H3>
-            <P>
-              Malicious browser extensions sometimes monkey-patch <IC>navigator.clipboard.writeText</IC> to silently replace copied wallet addresses or payment links. VeilPay detects this at page load by calling <IC>Function.prototype.toString</IC> on the clipboard method — extensions that override the method typically do not also spoof the prototype&apos;s <IC>toString</IC>, so the absence of &quot;native code&quot; in the output reveals tampering.
-            </P>
-            <P>
-              If tampering is detected, the Copy button is disabled and an amber warning is shown. The Share button (using the OS-level Web Share API, which extensions cannot intercept) remains available as a safe alternative.
-            </P>
-            <Warn>
-              VeilPay cannot detect OS-level clipboard hijackers (malware running outside the browser). Always verify the destination address in your wallet before confirming any transaction.
-            </Warn>
-
-            <H3>Remote access and screen sharing</H3>
-            <P>
-              Browsers run in a sandbox with no access to OS-level state. VeilPay cannot reliably detect remote desktop software (TeamViewer, AnyDesk, RDP) or screen recording apps — these operate below the browser layer. The focus-loss re-blur is the strongest available browser-side mitigation: it re-hides the claim key the moment the window is no longer in the foreground.
-            </P>
-            <P>
-              For high-value transfers, follow these environment recommendations before revealing a claim key:
-            </P>
-            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-              {[
-                "Use a private browser window with extensions disabled.",
-                "Confirm no screen sharing or remote desktop session is active.",
-                "Do not open the link on a shared or public computer.",
-                "If you must use a shared device, copy the link and open it only on your personal device.",
-              ].map((s, i) => (
-                <li key={i} className="flex gap-2"><span className="text-[#00b3ff] shrink-0">•</span>{s}</li>
-              ))}
-            </ul>
-
-            <H3>x402 replay protection</H3>
-            <P>Each 402 invoice is registered server-side with a 10-minute TTL. The Authorization header must include an invoiceId that was actually issued by the server. Deposit transaction signatures are stored after successful verification — presenting the same deposit signature a second time returns 403 immediately.</P>
-
-            <H3>Supabase RLS</H3>
-            <P>Link metadata (non-sensitive: id, amount, token, expiry, claimed) is stored in Supabase with Row Level Security enabled. The database stores no private keys, no claim notes, and no transaction signatures that could compromise user funds.</P>
-
-            <Warn>VeilPay is non-custodial. Private keys never leave your browser. All transaction signing is performed by your wallet adapter (Phantom, Solflare, etc.).</Warn>
-
-          </motion.div>
+          {/* ── Footer spacer ── */}
+          <div style={{ height: 64 }} />
         </main>
+
+        {/* Right TOC */}
+        <aside className="dc-sidebar-r">
+          <div className="dc-sidebar-r-inner">
+            <p className="dc-toc-label">On this page</p>
+            {NAV.map(({ group, items }) => (
+              <div key={group} className="dc-toc-group">
+                <p className="dc-toc-group-label">{group}</p>
+                {items.map(({ id, label }) => (
+                  <button
+                    key={id}
+                    className={`dc-toc-item${active === id ? " is-active" : ""}`}
+                    onClick={() => go(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </aside>
       </div>
 
       {/* Footer */}
-      <footer style={{ borderTop: "1px solid var(--hairline)", padding: "24px", marginTop: 32 }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, color: "var(--ink-4)" }}>
-          <span>VeilPay Docs</span>
-          <div style={{ display: "flex", gap: 16 }}>
-            <a href="/" style={{ color: "var(--ink-4)" }}>Home</a>
-            <a href="/create" style={{ color: "var(--ink-4)" }}>App</a>
+      <footer className="dc-footer">
+        <div className="dc-footer-inner">
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 18, height: 18, opacity: 0.6 }} />
+            <span>VeilPay Docs · Built on Umbra Protocol</span>
+          </div>
+          <div style={{ display: "flex", gap: 20 }}>
+            <a href="/">Home</a>
+            <a href="/create">App</a>
+            <a href="/audit">Audit</a>
           </div>
         </div>
       </footer>
+
+      </div> {/* /content wrapper */}
+
+      <style jsx global>{`
+        /* ── Top bar ── */
+        .dc-topbar {
+          position:sticky; top:0; z-index:50;
+          border-bottom:1px solid var(--hairline);
+          border-radius:0 !important;
+          backdrop-filter:blur(20px) saturate(180%);
+          -webkit-backdrop-filter:blur(20px) saturate(180%);
+          overflow:visible !important;
+        }
+        .dc-topbar-inner {
+          max-width:1400px; margin:0 auto; padding:0 24px;
+          height:54px; display:flex; align-items:center; gap:16px;
+        }
+        .dc-topbar-logo { display:flex; align-items:center; gap:8px; font-weight:600; font-size:14px; letter-spacing:-0.02em; }
+        .dc-topbar-link { display:flex; align-items:center; gap:4px; font-size:12.5px; color:var(--ink-3); font-weight:500; transition:color 0.15s; }
+        .dc-topbar-link:hover { color:var(--ink); }
+
+        /* Search */
+        .dc-search {
+          flex:1; max-width:380px; display:flex; align-items:center; gap:8px;
+          background:var(--glass-bg); border:0.5px solid var(--hairline-strong);
+          border-radius:var(--radius-pill); padding:7px 14px; cursor:text;
+          font-size:13px; color:var(--ink-4);
+          transition:border-color 0.15s, box-shadow 0.15s;
+        }
+        .dc-search:hover { border-color:var(--hairline-strong); box-shadow:0 0 0 3px rgba(0,179,255,0.06); }
+        .dc-kbd {
+          margin-left:auto; font-size:10px; font-family:var(--font-mono);
+          padding:1px 6px; border-radius:5px;
+          background:var(--glass-bg-strong); border:0.5px solid var(--hairline-strong);
+          color:var(--ink-4);
+        }
+        .dc-theme-btn {
+          width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+          background:var(--glass-bg); border:0.5px solid var(--hairline); color:var(--ink-3);
+          cursor:pointer; transition:background 0.15s, color 0.15s; flex-shrink:0;
+        }
+        .dc-theme-btn:hover { background:var(--glass-bg-strong); color:var(--ink); }
+
+        /* Search dropdown */
+        .dc-search-input { flex:1; background:none; border:none; outline:none; font-size:13px; color:var(--ink); font-family:var(--font-sans); min-width:0; }
+        .dc-search-input::placeholder { color:var(--ink-4); }
+        .dc-search-drop {
+          position:absolute; top:calc(100% + 8px); left:0; right:0;
+          z-index:200; border-radius:var(--radius-md); overflow:hidden;
+          box-shadow:0 16px 40px -8px rgba(0,0,0,0.5);
+          max-height:320px; overflow-y:auto;
+          background:var(--bg) !important;
+          border:0.5px solid var(--hairline-strong) !important;
+          backdrop-filter:blur(24px) saturate(200%) !important;
+          -webkit-backdrop-filter:blur(24px) saturate(200%) !important;
+        }
+        [data-theme='dark'] .dc-search-drop {
+          background:rgba(10,16,32,0.96) !important;
+        }
+        :root:not([data-theme='dark']) .dc-search-drop {
+          background:rgba(245,249,255,0.97) !important;
+        }
+        .dc-search-result {
+          width:100%; text-align:left; display:flex; align-items:center; gap:8px;
+          padding:10px 14px; border-bottom:1px solid var(--hairline);
+          background:none; cursor:pointer; transition:background 0.12s;
+        }
+        .dc-search-result:last-child { border-bottom:none; }
+        .dc-search-result:hover { background:var(--glass-bg-strong); }
+
+        /* ── Body grid ── */
+        .dc-body {
+          flex:1; display:grid;
+          grid-template-columns:240px minmax(0,1fr) 200px;
+          max-width:1400px; margin:0 auto; width:100%; padding:0 24px;
+        }
+        @media (max-width:1100px) { .dc-body { grid-template-columns:220px minmax(0,1fr); } .dc-sidebar-r { display:none; } }
+        @media (max-width:720px)  { .dc-body { grid-template-columns:1fr; padding:0 16px; } .dc-sidebar-l { display:none; } }
+
+        /* ── Left sidebar ── */
+        .dc-sidebar-l { padding:28px 0; }
+        .dc-sidebar-l-inner { position:sticky; top:82px; max-height:calc(100vh - 100px); overflow-y:auto; padding-right:8px; }
+        .dc-sidebar-l-inner::-webkit-scrollbar { width:2px; }
+        .dc-sidebar-l-inner::-webkit-scrollbar-thumb { background:var(--hairline-strong); border-radius:2px; }
+        .dc-nav-group { margin-bottom:20px; }
+        .dc-nav-group-label { font-size:10px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-4); padding:0 10px; margin:0 0 4px; }
+        .dc-nav-item {
+          width:100%; text-align:left; display:block;
+          padding:7px 10px; border-radius:8px;
+          font-size:13px; font-weight:500; color:var(--ink-3);
+          background:transparent; border:0.5px solid transparent;
+          cursor:pointer; transition:all 0.13s; margin-bottom:1px;
+        }
+        .dc-nav-item:hover { color:var(--ink); background:var(--glass-bg-soft); }
+        .dc-nav-item.is-active {
+          color:var(--vp-sky-deep); background:rgba(0,179,255,0.08);
+          border-color:rgba(0,179,255,0.2);
+        }
+        [data-theme='dark'] .dc-nav-item.is-active { color:var(--vp-sky-2); }
+
+        /* ── Main content ── */
+        .dc-main { padding:36px 40px 0; max-width:740px; }
+        @media (max-width:720px) { .dc-main { padding:24px 0 0; } }
+
+        /* Section head */
+        .dc-section-head { margin-top:64px; margin-bottom:4px; padding-top:24px; scroll-margin-top:80px; }
+        .dc-section-head:first-child { margin-top:0; padding-top:0; }
+        .dc-tag { display:inline-block; font-size:10px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--vp-sky-deep); margin-bottom:10px; }
+        [data-theme='dark'] .dc-tag { color:var(--vp-sky-2); }
+        .dc-sh { font-size:28px; font-weight:600; letter-spacing:-0.025em; color:var(--ink); margin:0 0 16px; line-height:1.2; }
+        .dc-h3 { font-size:16px; font-weight:600; color:var(--ink); margin:32px 0 10px; letter-spacing:-0.015em; scroll-margin-top:80px; }
+        .dc-p { font-size:14px; color:var(--ink-2); line-height:1.75; margin:0 0 14px; }
+        .dc-link { color:var(--vp-sky-deep); text-decoration:underline; text-decoration-color:rgba(0,128,255,0.4); }
+        .dc-link:hover { text-decoration-color:var(--vp-sky-deep); }
+        [data-theme='dark'] .dc-link { color:var(--vp-sky-2); }
+        .dc-ul { margin:0 0 16px; padding:0; list-style:none; display:flex; flex-direction:column; gap:7px; }
+        .dc-ul li { font-size:14px; color:var(--ink-2); line-height:1.65; display:flex; gap:8px; }
+        .dc-ul li::before { content:'·'; color:var(--vp-sky); font-size:16px; line-height:1.4; flex-shrink:0; }
+        .dc-steps { list-style:none; padding:0; margin:0 0 20px; display:flex; flex-direction:column; gap:10px; }
+        .dc-steps li { display:flex; gap:12px; align-items:flex-start; font-size:14px; color:var(--ink-2); line-height:1.65; }
+        .dc-step-num { width:22px; height:22px; border-radius:6px; background:rgba(0,179,255,0.1); border:0.5px solid rgba(0,179,255,0.25); color:var(--vp-sky-deep); font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px; }
+        .dc-step-body { flex:1; }
+
+        /* Inline code */
+        .dc-ic { background:var(--glass-bg-strong); border:0.5px solid var(--hairline-strong); border-radius:5px; padding:1.5px 5px; font-size:12px; font-family:var(--font-mono); color:var(--vp-sky-deep); }
+        [data-theme='dark'] .dc-ic { color:var(--vp-sky-2); }
+
+        /* Code block */
+        .dc-code { margin:16px 0; border-radius:var(--radius-md); overflow:hidden; border:0.5px solid rgba(255,255,255,0.08); box-shadow:0 4px 20px -4px rgba(0,0,0,0.3); }
+        .dc-code-bar { display:flex; align-items:center; gap:8px; padding:8px 14px; background:rgba(15,20,35,0.95); border-bottom:1px solid rgba(255,255,255,0.06); }
+        .dc-dots { display:flex; gap:5px; }
+        .dc-dots span { width:10px; height:10px; border-radius:50%; }
+        .dc-dots span:nth-child(1) { background:#FF5F57; }
+        .dc-dots span:nth-child(2) { background:#FFBD2E; }
+        .dc-dots span:nth-child(3) { background:#28CA42; }
+        .dc-lang { margin-left:4px; font-size:10px; font-family:var(--font-mono); color:rgba(255,255,255,0.3); flex:1; }
+        .dc-copy { padding:4px; border-radius:5px; background:rgba(255,255,255,0.06); border:0.5px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.4); cursor:pointer; transition:background 0.15s, color 0.15s; display:flex; align-items:center; }
+        .dc-copy:hover { background:rgba(255,255,255,0.12); color:rgba(255,255,255,0.8); }
+        .dc-pre { margin:0; padding:18px; background:rgba(8,12,26,0.97); overflow-x:auto; }
+        .dc-pre code { font-size:12.5px; font-family:var(--font-mono); color:#a8d8a8; line-height:1.7; white-space:pre; }
+
+        /* Callouts */
+        .dc-callout { margin:16px 0; display:flex; gap:10px; padding:12px 16px; border-radius:var(--radius-sm); }
+        .dc-callout p { font-size:13px; color:var(--ink-2); line-height:1.6; margin:0; }
+        .dc-info { background:rgba(0,179,255,0.06); border:0.5px solid rgba(0,179,255,0.22); }
+        .dc-info > span { color:var(--vp-sky-deep); flex-shrink:0; font-size:14px; }
+        .dc-warn { background:rgba(245,158,11,0.06); border:0.5px solid rgba(245,158,11,0.22); color:#d97706; }
+        .dc-warn p { color:var(--ink-2); }
+
+        /* Table */
+        .dc-table-wrap { overflow-x:auto; margin:16px 0; border-radius:var(--radius-md); border:0.5px solid var(--hairline-strong); }
+        .dc-table { width:100%; border-collapse:collapse; font-size:13px; }
+        .dc-table th { text-align:left; padding:10px 14px; font-size:10.5px; font-weight:700; letter-spacing:0.07em; text-transform:uppercase; color:var(--ink-4); background:var(--glass-bg); border-bottom:1px solid var(--hairline-strong); }
+        .dc-table td { padding:10px 14px; border-bottom:1px solid var(--hairline); color:var(--ink-2); vertical-align:middle; }
+        .dc-table tr:last-child td { border-bottom:none; }
+        .dc-table tr:hover td { background:var(--glass-bg-soft); }
+
+        /* Concept grid */
+        .dc-concept-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:16px 0 20px; }
+        @media (max-width:560px) { .dc-concept-grid { grid-template-columns:1fr; } }
+        .dc-concept-card { padding:16px; }
+
+        /* ── Right TOC ── */
+        .dc-sidebar-r { padding:28px 0 28px 20px; }
+        .dc-sidebar-r-inner { position:sticky; top:82px; max-height:calc(100vh - 100px); overflow-y:auto; }
+        .dc-sidebar-r-inner::-webkit-scrollbar { width:2px; }
+        .dc-sidebar-r-inner::-webkit-scrollbar-thumb { background:var(--hairline-strong); border-radius:2px; }
+        .dc-toc-label { font-size:10px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-4); margin:0 0 10px; display:flex; align-items:center; gap:6px; }
+        .dc-toc-label::before { content:'≡'; font-size:12px; }
+        .dc-toc-group { margin-bottom:14px; }
+        .dc-toc-group-label { font-size:9.5px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-4); opacity:0.6; margin:0 0 3px 8px; }
+        .dc-toc-item {
+          width:100%; text-align:left; display:block;
+          padding:5px 8px; border-radius:6px; border-left:1.5px solid transparent;
+          font-size:12px; color:var(--ink-4); background:none; cursor:pointer;
+          transition:all 0.12s; margin-bottom:1px;
+        }
+        .dc-toc-item:hover { color:var(--ink-2); }
+        .dc-toc-item.is-active { color:var(--vp-sky-deep); border-left-color:var(--vp-sky); background:rgba(0,179,255,0.06); }
+        [data-theme='dark'] .dc-toc-item.is-active { color:var(--vp-sky-2); }
+
+        /* ── Footer ── */
+        .dc-footer { border-top:1px solid var(--hairline); padding:20px 0; margin-top:0; position:relative; z-index:1; }
+        .dc-footer-inner { max-width:1400px; margin:0 auto; padding:0 24px; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--ink-4); }
+        .dc-footer-inner a { color:var(--ink-4); transition:color 0.15s; }
+        .dc-footer-inner a:hover { color:var(--ink-2); }
+      `}</style>
     </div>
   );
 }
