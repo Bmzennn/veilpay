@@ -4,12 +4,10 @@ import { verifyX402Deposit } from "@/lib/x402";
 import { RPC_URL } from "@/lib/constants";
 import { getSupabaseServiceClient } from "@/lib/supabase";
 
-const SERVER_PRIVATE_KEY_BASE58 = process.env.X402_SERVER_PRIVATE_KEY || "";
+// Server Solana address used for replay record-keeping only.
+// X402_SERVER_PRIVATE_KEY is not needed here — verification uses the on-chain
+// balance delta, not server-side UTXO decryption.
 const SERVER_SOLANA_ADDRESS = process.env.NEXT_PUBLIC_X402_SERVER_ADDRESS || "";
-
-if (!SERVER_PRIVATE_KEY_BASE58 || !SERVER_SOLANA_ADDRESS) {
-  throw new Error("Missing X402_SERVER_PRIVATE_KEY or NEXT_PUBLIC_X402_SERVER_ADDRESS in environment variables.");
-}
 
 const INVOICE_AMOUNT_SOL = 0.1;
 const INVOICE_TTL_MS = 10 * 60 * 1000;
@@ -115,7 +113,7 @@ async function checkRateLimit(ip: string): Promise<boolean> {
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get("Authorization");
+  const authHeader = req.headers.get("X-402-Payment");
 
   if (!authHeader || !authHeader.startsWith("x402 ")) {
     const { invoiceIdHex } = await issueInvoice();
@@ -172,6 +170,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invoice unknown or expired." }, { status: 400 });
   }
 
+  if (!SERVER_SOLANA_ADDRESS) {
+    return NextResponse.json({ error: "Server not configured for x402 payments." }, { status: 503 });
+  }
+
   try {
     const connection = new Connection(RPC_URL, "confirmed");
     const expectedInvoiceId = new Uint8Array(Buffer.from(invoiceIdHex, "hex"));
@@ -181,6 +183,7 @@ export async function GET(req: NextRequest) {
       depositTxSignature: depositTxSig,
       serverSolanaAddress: SERVER_SOLANA_ADDRESS,
       expectedInvoiceId,
+      expectedAmountSol: INVOICE_AMOUNT_SOL,
     });
 
     if (!isValid) {

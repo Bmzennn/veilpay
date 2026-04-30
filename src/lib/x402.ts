@@ -1,4 +1,4 @@
-import { Connection, PublicKey } from "@solana/web3.js";
+import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { getSupabaseServiceClient } from "./supabase";
 import { NETWORK } from "./constants";
 
@@ -14,19 +14,13 @@ const UMBRA_PROGRAM_ID = new PublicKey(
 /**
  * Verify an x402 payment made via receiver-claimable UTXO (shielded deposit).
  *
- * The UTXO approach provides full payer-server unlinkability: the server's Solana
- * address does NOT appear in the transaction accounts. The destination is encrypted
- * on-chain using the server's X25519 public key — only the server can scan and claim
- * the UTXO from the Umbra shielded pool.
- *
- * Authorization header format: x402 <proofAccountSig>:<utxoSig>:<invoiceId>
- * We verify utxoSig (the createUtxoSignature from CreateUtxoFromPublicBalanceResult).
- *
  * Security model:
  * - invoiceId is 32-byte random, single-use, server-issued → only a payer who
  *   received the invoice from this server can present a valid invoiceId.
- * - UTXO creation proves the payer spent real Umbra-program fees.
- * - Atomic invoice consumption (in the caller) prevents replay.
+ * - Amount is verified via the fee-payer's on-chain balance delta: the payer's
+ *   SOL balance must decrease by at least expectedAmountSol (the UTXO deposit
+ *   amount dominates this delta; Solana tx fees add ~0.000005 SOL on top).
+ * - Atomic invoice consumption in the caller prevents replay.
  * - Supabase payments table provides cross-instance replay protection.
  */
 export interface VerifyX402DepositParams {
@@ -34,10 +28,17 @@ export interface VerifyX402DepositParams {
   depositTxSignature: string;    // createUtxoSignature from the UTXO creation
   serverSolanaAddress: string;   // for replay record only (not checked in tx)
   expectedInvoiceId: Uint8Array; // 32 bytes
+  expectedAmountSol: number;     // minimum SOL the payer must have committed
 }
 
 export async function verifyX402Deposit(params: VerifyX402DepositParams): Promise<boolean> {
-  const { connection, depositTxSignature, serverSolanaAddress, expectedInvoiceId } = params;
+  const {
+    connection,
+    depositTxSignature,
+    serverSolanaAddress,
+    expectedInvoiceId,
+    expectedAmountSol,
+  } = params;
 
   try {
     const supabase = getSupabaseServiceClient();
@@ -53,6 +54,10 @@ export async function verifyX402Deposit(params: VerifyX402DepositParams): Promis
         console.error(`[x402] Replay attempt — sig ${depositTxSignature.slice(0, 12)} already used`);
         return false;
       }
+    } else {
+      // Supabase not configured: block rather than proceed without replay protection.
+      console.error("[x402] Supabase not configured — cannot check replay. Rejecting payment.");
+      return false;
     }
 
     // ── Fetch and validate the UTXO creation transaction ─────────────────────
@@ -71,23 +76,36 @@ export async function verifyX402Deposit(params: VerifyX402DepositParams): Promis
       return false;
     }
 
-    // ── Note: server address NOT present in accounts — this is expected ───────
-    // For receiver-claimable UTXOs, the destination is encrypted using the
-    // server's X25519 public key. The server's Solana address does not appear
-    // in plaintext transaction accounts. This is exactly what provides
-    // payer-server unlinkability on-chain.
+    // ── Verify payment amount via fee-payer balance delta ─────────────────────
+    // index 0 in accountKeys is always the fee payer (Solana protocol guarantee).
+    // The delta = UTXO deposit amount + Solana tx fee (~5000 lamports).
+    // If the attacker deposited less than the required amount, this check fails.
+    const preBalance  = tx.meta?.preBalances?.[0]  ?? 0;
+    const postBalance = tx.meta?.postBalances?.[0] ?? 0;
+    const payerSpentLamports = preBalance - postBalance;
+    const requiredLamports   = Math.round(expectedAmountSol * LAMPORTS_PER_SOL);
 
-    console.log(`[x402] ✅ UTXO tx confirmed — sig ${depositTxSignature.slice(0, 12)}`);
+    if (payerSpentLamports < requiredLamports) {
+      console.error(
+        `[x402] Underpayment: payer spent ${payerSpentLamports} lamports, ` +
+        `required >= ${requiredLamports} (${expectedAmountSol} SOL)`
+      );
+      return false;
+    }
+
+    console.log(
+      `[x402] ✅ Amount verified: payer spent ${payerSpentLamports} lamports ` +
+      `(required ${requiredLamports}) — sig ${depositTxSignature.slice(0, 12)}`
+    );
 
     // ── Record to prevent replay ──────────────────────────────────────────────
-    if (supabase) {
-      await supabase.from("payments").insert({
-        deposit_sig: depositTxSignature,
-        invoice_id:  Buffer.from(expectedInvoiceId).toString("hex"),
-        recipient:   serverSolanaAddress,
-        verified_at: new Date().toISOString(),
-      });
-    }
+    await supabase!.from("payments").insert({
+      deposit_sig:  depositTxSignature,
+      invoice_id:   Buffer.from(expectedInvoiceId).toString("hex"),
+      recipient:    serverSolanaAddress,
+      amount_sol:   expectedAmountSol,
+      verified_at:  new Date().toISOString(),
+    });
 
     return true;
 
