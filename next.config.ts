@@ -13,14 +13,13 @@ const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
   // Basic XSS protection header (legacy browsers)
   { key: "X-XSS-Protection", value: "1; mode=block" },
-  // CSP temporarily set to report-only with open connect-src to diagnose
-  // which URLs the Umbra SDK calls during registration. Once identified,
-  // tighten back to an explicit allowlist.
   {
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      // wasm-unsafe-eval allows WebAssembly instantiation (required by snarkjs)
+      // without enabling arbitrary eval()/new Function() string-to-code execution.
+      "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob:",

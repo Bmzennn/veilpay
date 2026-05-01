@@ -3,10 +3,9 @@ import { Connection } from "@solana/web3.js";
 import { verifyX402Deposit } from "@/lib/x402";
 import { RPC_URL } from "@/lib/constants";
 import { getSupabaseServiceClient } from "@/lib/supabase";
+import { getClientIp } from "@/lib/rateLimit";
+import { securityLog } from "@/lib/securityLog";
 
-// Server Solana address used for replay record-keeping only.
-// X402_SERVER_PRIVATE_KEY is not needed here — verification uses the on-chain
-// balance delta, not server-side UTXO decryption.
 const SERVER_SOLANA_ADDRESS = process.env.NEXT_PUBLIC_X402_SERVER_ADDRESS || "";
 
 const INVOICE_AMOUNT_SOL = 0.1;
@@ -15,13 +14,7 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 5;
 
 // ─── Invoice registry (Supabase-backed) ──────────────────────────────────────
-// Uses the x402_invoices table so state persists across serverless instances.
-// Schema: id TEXT PK, expires_at TIMESTAMPTZ, consumed BOOLEAN DEFAULT false
-//
-// Fallback: if Supabase is not configured (dev without DB), fall back to
-// in-memory Map so local development still works.
-
-const _memInvoices = new Map<string, number>(); // fallback for dev
+const _memInvoices = new Map<string, number>(); // dev fallback only
 
 async function issueInvoice(): Promise<{ invoiceId: Uint8Array; invoiceIdHex: string }> {
   const invoiceId = crypto.getRandomValues(new Uint8Array(32));
@@ -37,8 +30,7 @@ async function issueInvoice(): Promise<{ invoiceId: Uint8Array; invoiceIdHex: st
     if (error) {
       console.error(
         "[x402] Supabase invoice insert failed:", error.message,
-        "\n  ⚠️  Falling back to in-memory store — invoices WILL break across serverless instances.",
-        "\n  ⚠️  Run the x402 table setup SQL in your Supabase project to fix this permanently."
+        "\n  ⚠️  Falling back to in-memory store — invoices WILL break across serverless instances."
       );
       _memInvoices.set(invoiceIdHex, Date.now() + INVOICE_TTL_MS);
     }
@@ -73,17 +65,17 @@ async function consumeInvoice(invoiceIdHex: string): Promise<boolean> {
     return true;
   }
 
-  // Fallback: in-memory
+  // Dev fallback: in-memory
   const exp = _memInvoices.get(invoiceIdHex);
   if (!exp || Date.now() > exp) return false;
   _memInvoices.delete(invoiceIdHex);
   return true;
 }
 
-// ─── Rate limiter (Supabase-backed) ──────────────────────────────────────────
+// ─── Rate limiter (Supabase-backed, fail-closed) ──────────────────────────────
 const _memRate = new Map<string, number[]>();
 
-async function checkRateLimit(ip: string): Promise<boolean> {
+async function checkX402RateLimit(ip: string): Promise<boolean> {
   const client = getSupabaseServiceClient();
 
   if (client) {
@@ -94,14 +86,18 @@ async function checkRateLimit(ip: string): Promise<boolean> {
       .eq("ip", ip)
       .gt("hit_at", windowStart);
 
-    if (error) return true; // fail open on DB error
+    if (error) {
+      // Fail closed: a DB error cannot be used to bypass rate limiting.
+      console.error("[x402] Rate-limit DB error, denying request:", error.message);
+      return false;
+    }
     if ((count ?? 0) >= RATE_MAX) return false;
 
     await client.from("x402_rate_limit").insert({ ip, hit_at: new Date().toISOString() });
     return true;
   }
 
-  // Fallback: in-memory
+  // Dev fallback: in-memory
   const now = Date.now();
   const hits = (_memRate.get(ip) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
   if (hits.length >= RATE_MAX) return false;
@@ -139,16 +135,13 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Rate-limit authenticated attempts (prevents RPC flooding)
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
-  if (!(await checkRateLimit(ip))) {
+  const ip = getClientIp(req);
+
+  if (!(await checkX402RateLimit(ip))) {
+    securityLog("rate_limit_hit", { ip, detail: "x402 endpoint" });
     return NextResponse.json({ error: "Too many requests." }, { status: 429 });
   }
 
-  // Format: x402 <proofAccountSig>:<utxoSig>:<invoiceId>
-  // proofAccountSig = createProofAccountSignature (proof account buffer tx)
-  // utxoSig         = createUtxoSignature (actual UTXO creation tx)
-  // invoiceId       = 64-char hex, server-issued one-time token
   const tokenParts = authHeader.substring(5).split(":");
   if (tokenParts.length !== 3) {
     return NextResponse.json(
@@ -163,10 +156,12 @@ export async function GET(req: NextRequest) {
   const hexRegex = /^[0-9a-fA-F]{64}$/;
 
   if (!sigRegex.test(proofTxSig) || !sigRegex.test(depositTxSig) || !hexRegex.test(invoiceIdHex)) {
+    securityLog("payment_rejected", { ip, detail: "malformed proof format" });
     return NextResponse.json({ error: "Invalid payment proof format." }, { status: 400 });
   }
 
   if (!(await consumeInvoice(invoiceIdHex))) {
+    securityLog("payment_rejected", { ip, detail: "invoice unknown or expired", ref: invoiceIdHex.slice(0, 12) });
     return NextResponse.json({ error: "Invoice unknown or expired." }, { status: 400 });
   }
 
@@ -187,6 +182,7 @@ export async function GET(req: NextRequest) {
     });
 
     if (!isValid) {
+      securityLog("payment_rejected", { ip, detail: "on-chain verification failed", ref: depositTxSig.slice(0, 12) });
       return NextResponse.json({ error: "Payment verification failed." }, { status: 403 });
     }
 
@@ -205,7 +201,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error during x402 verification:", error);
+    console.error("[x402] Verification error:", error);
     return NextResponse.json({ error: "Internal server error during verification." }, { status: 500 });
   }
 }

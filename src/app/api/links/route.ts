@@ -19,12 +19,15 @@ import { ed25519 } from "@noble/curves/ed25519";
 import { PublicKey } from "@solana/web3.js";
 import { getSupabaseServiceClient, getSupabaseClient } from "@/lib/supabase";
 import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
+import { securityLog } from "@/lib/securityLog";
 
 // ─── POST — create link ───────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   // 20 link creations per IP per minute — prevents DB spam
-  if (!checkRateLimit(`links-POST:${getClientIp(req)}`, 20)) {
+  const ip = getClientIp(req);
+  if (!checkRateLimit(`links-POST:${ip}`, 20)) {
+    securityLog("rate_limit_hit", { ip, detail: "links POST" });
     return NextResponse.json({ error: "Too many requests." }, { status: 429 });
   }
 
@@ -84,9 +87,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const sigBytes = Buffer.from(record.signature, "base64");
     const valid = ed25519.verify(sigBytes, msgBytes, pubkeyBytes);
     if (!valid) {
+      securityLog("signature_failure", { detail: "POST /api/links — invalid sender sig", ref: record.sender_address.slice(0, 8) });
       return NextResponse.json({ error: "Invalid wallet signature" }, { status: 403 });
     }
   } catch {
+    securityLog("signature_failure", { detail: "POST /api/links — sig verification threw" });
     return NextResponse.json({ error: "Signature verification failed" }, { status: 400 });
   }
 
@@ -194,6 +199,7 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
     }
 
     if (claimer_address !== link.locked_to) {
+      securityLog("lock_violation", { detail: `PATCH /api/links — wrong claimer for locked link ${id}`, ref: claimer_address.slice(0, 8) });
       return NextResponse.json(
         { error: "Unauthorized: claimer wallet does not match the locked recipient" },
         { status: 403 }
@@ -223,9 +229,11 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
       const sigBytes = Buffer.from(signature, "base64");
       const valid = ed25519.verify(sigBytes, msgBytes, pubkeyBytes);
       if (!valid) {
+        securityLog("signature_failure", { detail: `PATCH /api/links — invalid claim sig for ${id}`, ref: claimer_address.slice(0, 8) });
         return NextResponse.json({ error: "Invalid wallet signature" }, { status: 403 });
       }
     } catch {
+      securityLog("signature_failure", { detail: `PATCH /api/links — claim sig verification threw for ${id}` });
       return NextResponse.json({ error: "Signature verification failed" }, { status: 400 });
     }
   }

@@ -1318,7 +1318,14 @@ export function parseClaimHash(hash: string): {
   const token: Token = tokenStr === "SOL" || tokenStr === "USDC" ? tokenStr : "USDC";
   let memo: string | undefined;
   if (secondColon !== -1) {
-    try { memo = decodeURIComponent(rest.slice(secondColon + 1)); } catch { /* ignore malformed */ }
+    try {
+      const raw = decodeURIComponent(rest.slice(secondColon + 1));
+      // Sanitise: hard-cap at 200 chars, strip non-printable control characters.
+      // The client enforces maxLength=200 on the input but the URL can be crafted
+      // directly, so we validate here regardless of origin.
+      const trimmed = raw.slice(0, 200).replace(/[\x00-\x1F\x7F]/g, "");
+      if (trimmed.length > 0) memo = trimmed;
+    } catch { /* ignore malformed percent-encoding */ }
   }
   return { claimSecret, token, memo };
 }

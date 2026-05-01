@@ -42,7 +42,7 @@
     "protobufjs": "^7.4.0",
     "lodash": "^4.17.21",
     "elliptic": "^6.6.1",
-    "bigint-buffer": ">=1.1.5",
+    "bigint-buffer": "1.1.5",
     "underscore": ">=1.13.7",
     "jsonpath": ">=1.1.1",
     "bfj": ">=7.0.3",

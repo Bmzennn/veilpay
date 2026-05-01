@@ -38,8 +38,19 @@ export function checkRateLimit(key: string, max: number): boolean {
   return true;
 }
 
-/** Extract the client IP from a Next.js request. */
+/**
+ * Extract the real client IP from a Next.js request.
+ *
+ * x-forwarded-for is a comma-separated chain appended by each proxy:
+ *   <client>, <proxy1>, ..., <platform>
+ * The LAST entry is appended by Vercel's edge and cannot be spoofed by the
+ * client. The FIRST entry is attacker-controlled — never key rate limits on it.
+ */
 export function getClientIp(req: Request): string {
   const fwd = (req.headers as Headers).get("x-forwarded-for");
-  return fwd ? fwd.split(",")[0].trim() : "unknown";
+  if (fwd) {
+    const parts = fwd.split(",");
+    return parts[parts.length - 1].trim();
+  }
+  return "unknown";
 }
