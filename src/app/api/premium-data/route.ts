@@ -175,6 +175,7 @@ export async function GET(req: NextRequest) {
 
     const isValid = await verifyX402Deposit({
       connection,
+      proofTxSignature:   proofTxSig,
       depositTxSignature: depositTxSig,
       serverSolanaAddress: SERVER_SOLANA_ADDRESS,
       expectedInvoiceId,
