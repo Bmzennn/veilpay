@@ -89,28 +89,125 @@ NEXT_PUBLIC_DEBUG=false
 
 ### 3. Set up Supabase tables
 
-Run `setup_payments_table.sql` in your Supabase SQL editor, then also create:
-
-```sql
-create table x402_invoices (
-  id text primary key,
-  expires_at timestamptz not null,
-  consumed boolean default false
-);
-
-create table x402_rate_limit (
-  id bigserial primary key,
-  ip text not null,
-  hit_at timestamptz not null
-);
-create index on x402_rate_limit (ip, hit_at);
-```
+Run `setup_payments_table.sql` in your Supabase SQL editor. It creates all three required tables: `x402_invoices`, `x402_rate_limit`, and `payments`.
 
 ### 4. Run
 
 ```bash
 npm run dev
 ```
+
+---
+
+## x402 — Private Paywalled APIs
+
+VeilPay implements the [x402 payment protocol](https://x402.org): an HTTP `402 Payment Required` flow where the client pays a shielded on-chain fee and retries the request with a proof of payment. Unlike standard x402, VeilPay payments go through the Umbra ZK shielded pool — **the server's address never appears in the transaction**, so payment and identity are fully unlinkable on-chain.
+
+### How the flow works
+
+```
+Client                                    Server
+  │── GET /api/resource ─────────────────▶ │
+  │◀─ 402 { invoice: { amount, token,      │  issueInvoice()
+  │         mint, destination, invoiceId }}─│
+  │                                        │
+  │  [ZK proof + shielded UTXO on Solana]  │
+  │                                        │
+  │── GET /api/resource ─────────────────▶ │
+  │   X-402-Payment: x402 <proof>:<utxo>:<id>  verifyPayment()
+  │◀─ 200 { data: "..." } ─────────────────│
+```
+
+The `X-402-Payment` header carries three base58 signatures: `proofAccountSig:utxoSig:invoiceId`. The server verifies both on-chain transactions and the invoice ID embedded in the UTXO's optional data.
+
+### Accepting x402 payments on your server
+
+Use the `@veilpay/server` package (lives in `packages/server/`):
+
+```ts
+// app/api/your-endpoint/route.ts  (Next.js App Router)
+import { VeilPayServer, SOL_MINT, USDC_MINT_MAINNET } from "@veilpay/server";
+
+const veilpay = new VeilPayServer({
+  network:                "mainnet",           // or "devnet"
+  supabaseUrl:            process.env.SUPABASE_URL!,
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+});
+
+// Set your token here — SOL, USDC, USDT, or any SPL mint
+const TOKEN = { symbol: "SOL", mint: SOL_MINT, decimals: 9, amount: 0.1 };
+const SERVER_ADDRESS = process.env.X402_SERVER_ADDRESS!;
+
+export async function GET(req: Request) {
+  const authHeader = req.headers.get("X-402-Payment");
+
+  if (!authHeader) {
+    const invoice = await veilpay.issueInvoice({
+      amount: TOKEN.amount, token: TOKEN.symbol,
+      mint: TOKEN.mint, decimals: TOKEN.decimals,
+      serverAddress: SERVER_ADDRESS,
+    });
+    return Response.json({ error: "Payment Required", invoice }, {
+      status: 402,
+      headers: { "Www-Authenticate": `x402 invoice="${invoice.invoiceId}"` },
+    });
+  }
+
+  const proof = await veilpay.handlePayment({
+    header: authHeader, serverAddress: SERVER_ADDRESS,
+    expectedAmount: TOKEN.amount, expectedToken: TOKEN.symbol,
+    expectedMint: TOKEN.mint, expectedDecimals: TOKEN.decimals,
+  });
+
+  if (!proof) return Response.json({ error: "Payment verification failed." }, { status: 402 });
+
+  return Response.json({ success: true, data: "protected content" });
+}
+```
+
+Works the same way with Express, Hono, or any Node.js framework — see `packages/server/README.md` for full examples.
+
+#### Token configuration
+
+| Token | `mint`                                           | `decimals` | Constant             |
+|-------|--------------------------------------------------|------------|----------------------|
+| SOL   | `So11111111111111111111111111111111111111112`     | 9          | `SOL_MINT`           |
+| USDC  | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`  | 6          | `USDC_MINT_MAINNET`  |
+| USDT  | `Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB`  | 6          | `USDT_MINT_MAINNET`  |
+
+For devnet USDC pass your devnet mint address directly — no constant needed.
+
+#### Required env vars
+
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key   # server-only, never NEXT_PUBLIC_
+X402_SERVER_ADDRESS=your_solana_wallet_address
+```
+
+Run `setup_payments_table.sql` in your Supabase SQL editor once to create the three required tables (`x402_invoices`, `x402_rate_limit`, `payments`).
+
+### Paying x402 endpoints (AI agents / CLI)
+
+Use the `pay-invoice.cjs` script from the [agent-skills](https://github.com/Bmzennn/agent-skills) repo. It auto-detects the token from the server's 402 invoice — no configuration needed on the payer side:
+
+```bash
+# 1. Install the veilpay agent skill
+npx skills add Bmzennn/agent-skills@veilpay
+
+# 2. Create a wallet (one-time)
+node scripts/wallet.cjs create
+
+# 3. Pay any x402 endpoint
+INVOICE=$(curl -s https://your-api.com/endpoint | jq '.invoice')
+node scripts/pay-invoice.cjs "$INVOICE" --network mainnet
+# → prints: X-402-Payment: x402 <proof>:<utxo>:<invoiceId>
+
+# 4. Retry with the payment header
+curl -H "X-402-Payment: <header from step 3>" https://your-api.com/endpoint
+```
+
+The script reads `mint` and `decimals` from the invoice directly, so it works with any token the server specifies without any changes on the agent side.
 
 ---
 
