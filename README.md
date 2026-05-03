@@ -122,11 +122,11 @@ The `X-402-Payment` header carries three base58 signatures: `proofAccountSig:utx
 
 ### Accepting x402 payments on your server
 
-Use the `@veilpay/server` package (lives in `packages/server/`):
+Use the `@bmzennn/veilpay-server` package (lives in `packages/server/`):
 
 ```ts
 // app/api/your-endpoint/route.ts  (Next.js App Router)
-import { VeilPayServer, SOL_MINT, USDC_MINT_MAINNET } from "@veilpay/server";
+import { VeilPayServer, SOL_MINT, USDC_MINT_MAINNET } from "@bmzennn/veilpay-server";
 
 const veilpay = new VeilPayServer({
   network:                "mainnet",           // or "devnet"

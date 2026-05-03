@@ -1,11 +1,11 @@
-# @veilpay/server
+# @bmzennn/veilpay-server
 
 Accept private x402 payments on your server. Payments are made via the [Umbra ZK shielded pool](https://umbraprivacy.com) — the payer and server are never linked on-chain.
 
 ## Install
 
 ```bash
-npm install @veilpay/server
+npm install @bmzennn/veilpay-server
 ```
 
 ## 1. Database setup
@@ -30,7 +30,7 @@ X402_SERVER_ADDRESS=your_solana_wallet_address    # receives the shielded paymen
 
 ```ts
 // app/api/your-endpoint/route.ts
-import { VeilPayServer, SOL_MINT, USDC_MINT_MAINNET } from "@veilpay/server";
+import { VeilPayServer, SOL_MINT, USDC_MINT_MAINNET } from "@bmzennn/veilpay-server";
 
 const veilpay = new VeilPayServer({
   network:                "mainnet",           // or "devnet"
@@ -97,7 +97,7 @@ export async function GET(req: Request) {
 
 ```ts
 import express from "express";
-import { VeilPayServer, USDC_MINT_MAINNET } from "@veilpay/server";
+import { VeilPayServer, USDC_MINT_MAINNET } from "@bmzennn/veilpay-server";
 
 const veilpay = new VeilPayServer({
   network:                "mainnet",

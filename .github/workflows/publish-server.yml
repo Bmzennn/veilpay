@@ -1,0 +1,45 @@
+name: Publish @bmzennn/veilpay-server
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.2.0). Leave blank to use package.json version."
+        required: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: "@bmzennn"
+
+      - name: Install dependencies
+        working-directory: packages/server
+        run: npm install
+
+      - name: Bump version (manual trigger only)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.version != ''
+        working-directory: packages/server
+        run: npm version ${{ github.event.inputs.version }} --no-git-tag-version
+
+      - name: Build
+        working-directory: packages/server
+        run: npm run build
+
+      - name: Publish to GitHub Packages
+        working-directory: packages/server
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

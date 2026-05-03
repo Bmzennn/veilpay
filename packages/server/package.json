@@ -1,5 +1,5 @@
 {
-  "name": "@veilpay/server",
+  "name": "@bmzennn/veilpay-server",
   "version": "0.1.0",
   "description": "Server-side helpers for accepting private x402 payments via the Umbra ZK shielded pool",
   "main": "dist/index.js",
@@ -11,12 +11,21 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist", "sql"],
+  "files": ["dist", "sql", "README.md"],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean"
   },
   "keywords": ["x402", "veilpay", "umbra", "solana", "privacy", "payments"],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Bmzennn/veilpay.git",
+    "directory": "packages/server"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
   "peerDependencies": {
     "@solana/web3.js": "^1.95.0"
   },
