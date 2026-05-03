@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>VeilPay — Maintenance</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+  :root {
+    --vp-sky:     #00b3ff;
+    --vp-sky-2:   #4dd0ff;
+    --vp-sky-deep:#0080ff;
+    --vp-violet:  #6b7cff;
+    --bg:         #040814;
+    --ink:        #f3f8ff;
+    --ink-2:      rgba(243,248,255,.78);
+    --ink-3:      rgba(243,248,255,.55);
+    --ink-4:      rgba(243,248,255,.32);
+    --hairline:   rgba(255,255,255,.10);
+    --hairline-strong: rgba(255,255,255,.20);
+    --glass-bg:        rgba(255,255,255,.04);
+    --glass-bg-strong: rgba(255,255,255,.08);
+    --glass-border:    rgba(255,255,255,.10);
+    --glass-border-btm:rgba(0,0,0,.50);
+    --glass-shadow: 0 1px 0 rgba(255,255,255,.16) inset,
+                    0 -1px 0 rgba(0,0,0,.5) inset,
+                    0 24px 60px -20px rgba(0,0,0,.6),
+                    0 4px 14px -6px rgba(0,0,0,.4);
+    --font-sans: 'Geist',ui-sans-serif,system-ui,sans-serif;
+    --font-serif:'Instrument Serif','Times New Roman',serif;
+    --font-mono: 'Geist Mono',ui-monospace,Menlo,monospace;
+    --r-md: 18px;
+    --r-lg: 26px;
+    --r-xl: 36px;
+    --r-pill: 999px;
+  }
+
+  html,body {
+    width:100%;min-height:100vh;overflow:hidden;
+    background:var(--bg);color:var(--ink);
+    font-family:var(--font-sans);
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+
+  .stage {
+    position:fixed;inset:0;overflow:hidden;pointer-events:none;
+    background:
+      radial-gradient(ellipse 80% 60% at 70% 0%,  rgba(0,179,255,.22),transparent 60%),
+      radial-gradient(ellipse 60% 50% at 10% 90%, rgba(107,124,255,.18),transparent 60%),
+      radial-gradient(ellipse 100% 80% at 50% 50%,#0a1428 0%,#040814 70%);
+  }
+  .orb { position:absolute;border-radius:50%;filter:blur(80px);mix-blend-mode:screen; }
+  .o1{width:520px;height:520px;background:radial-gradient(circle,var(--vp-sky),transparent 70%);top:-140px;left:6%;opacity:.42;animation:d1 28s ease-in-out infinite;}
+  .o2{width:640px;height:640px;background:radial-gradient(circle,var(--vp-violet),transparent 70%);top:10%;right:-160px;opacity:.32;animation:d2 36s ease-in-out infinite;}
+  .o3{width:460px;height:460px;background:radial-gradient(circle,var(--vp-sky-2),transparent 70%);bottom:-150px;left:30%;opacity:.28;animation:d3 32s ease-in-out infinite;}
+  @keyframes d1{0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(80px,60px) scale(1.1)}}
+  @keyframes d2{0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(-100px,80px) scale(.9)}}
+  @keyframes d3{0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(60px,-80px) scale(1.15)}}
+  .noise {
+    position:absolute;inset:-50%;opacity:.32;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.55 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+
+  .page {
+    position:relative;z-index:1;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:52px;
+    padding:56px 72px;
+  }
+
+  .left {
+    flex:1;
+    display:flex;flex-direction:column;
+    align-items:flex-start;justify-content:center;
+    max-width:500px;
+  }
+
+  .logo-row {
+    display:flex;align-items:center;gap:11px;
+    margin-bottom:32px;
+  }
+  .logo-img { width:40px;height:40px;border-radius:10px;object-fit:contain; }
+  .logo-name { font-size:17px;font-weight:600;letter-spacing:-.025em; }
+
+  .eyebrow {
+    display:inline-flex;align-items:center;gap:8px;
+    font-size:11px;font-weight:500;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--vp-sky-2);
+    margin-bottom:16px;
+  }
+  .eyebrow::before{content:'';width:16px;height:1px;background:currentColor;opacity:.45;}
+
+  .headline {
+    font-weight:500;font-size:52px;
+    line-height:.96;letter-spacing:-.04em;
+    margin-bottom:20px;
+  }
+  .headline em {
+    font-family:var(--font-serif);font-style:italic;font-weight:400;
+    background:linear-gradient(180deg,var(--vp-sky-2),var(--vp-sky-deep));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+
+  .body-copy {
+    font-size:15.5px;line-height:1.55;
+    color:var(--ink-2);letter-spacing:-.01em;
+    margin-bottom:28px;
+    max-width:400px;
+  }
+
+  .pills { display:flex;align-items:center;gap:9px;flex-wrap:wrap; }
+  .pill {
+    display:inline-flex;align-items:center;gap:7px;
+    padding:8px 15px;border-radius:var(--r-pill);
+    font-size:12.5px;font-weight:500;
+  }
+  .pill-live {
+    background:rgba(0,179,255,.10);
+    border:.5px solid rgba(0,179,255,.30);
+    color:var(--vp-sky-2);
+  }
+  .pill-eta {
+    background:var(--glass-bg);
+    border:.5px solid var(--glass-border);
+    color:var(--ink-3);
+  }
+  .pulse-dot {
+    width:7px;height:7px;border-radius:50%;flex-shrink:0;
+    background:var(--vp-sky-2);
+    box-shadow:0 0 6px var(--vp-sky),0 0 0 2px rgba(0,179,255,.25);
+    animation:pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 6px var(--vp-sky),0 0 0 2px rgba(0,179,255,.25)} 50%{opacity:.5;box-shadow:0 0 14px var(--vp-sky),0 0 0 4px rgba(0,179,255,.10)}}
+
+  .card {
+    flex-shrink:0;width:420px;
+    position:relative;
+    background:var(--glass-bg);
+    border:.5px solid var(--glass-border);
+    border-bottom-color:var(--glass-border-btm);
+    border-radius:var(--r-xl);
+    -webkit-backdrop-filter:blur(14px) saturate(180%);
+    backdrop-filter:blur(14px) saturate(180%);
+    box-shadow:var(--glass-shadow);
+    overflow:hidden;
+    padding:32px;
+  }
+  .card::before {
+    content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;
+    background:linear-gradient(135deg,rgba(255,255,255,.18) 0%,transparent 35%,transparent 65%,rgba(0,179,255,.04) 100%);
+    mix-blend-mode:screen;z-index:0;
+  }
+  .card::after {
+    content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;
+    background:radial-gradient(ellipse 60% 40% at 80% 100%,rgba(0,179,255,.08),transparent 60%);
+    z-index:0;
+  }
+  .card > * { position:relative;z-index:1; }
+
+  .card-label {
+    font-size:10.5px;font-weight:500;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--ink-3);
+    margin-bottom:24px;
+  }
+
+  .track { display:flex;flex-direction:column;gap:0;margin-bottom:26px; }
+  .track-node {
+    display:flex;align-items:center;gap:13px;
+    padding:12px 14px;border-radius:var(--r-md);
+  }
+  .track-node.active {
+    background:var(--glass-bg-strong);
+    border:.5px solid var(--glass-border);
+  }
+
+  .t-icon {
+    width:36px;height:36px;border-radius:10px;flex-shrink:0;
+    display:grid;place-items:center;font-size:15px;
+  }
+  .t-icon.done    { background:rgba(52,211,153,.14);border:.5px solid rgba(52,211,153,.25);color:#34d399; }
+  .t-icon.active  { background:rgba(0,179,255,.14); border:.5px solid rgba(0,179,255,.30);color:var(--vp-sky-2);animation:glow 2.4s ease-in-out infinite; }
+  .t-icon.pending { background:var(--glass-bg);     border:.5px solid var(--hairline);color:var(--ink-4); }
+  @keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(0,179,255,.4)} 50%{box-shadow:0 0 0 5px rgba(0,179,255,0)}}
+
+  .t-text { flex:1;display:flex;flex-direction:column;gap:2px; }
+  .t-title { font-size:13.5px;font-weight:500;letter-spacing:-.01em;color:var(--ink); }
+  .t-sub   { font-size:11.5px;color:var(--ink-3); }
+
+  .t-badge {
+    font-family:var(--font-mono);font-size:10px;font-weight:500;
+    padding:3px 8px;border-radius:var(--r-pill);flex-shrink:0;
+  }
+  .b-done    { background:rgba(52,211,153,.12);color:#34d399; border:.5px solid rgba(52,211,153,.2); }
+  .b-active  { background:rgba(0,179,255,.12); color:var(--vp-sky-2);border:.5px solid rgba(0,179,255,.2); }
+  .b-pending { background:var(--glass-bg);     color:var(--ink-4);border:.5px solid var(--hairline); }
+
+  .connector {
+    width:1px;height:12px;
+    background:linear-gradient(to bottom,var(--hairline-strong),var(--hairline));
+    margin-left:30px;
+  }
+
+  .prog { display:flex;flex-direction:column;gap:7px; }
+  .prog-labels {
+    display:flex;justify-content:space-between;
+    font-family:var(--font-mono);font-size:10px;color:var(--ink-4);letter-spacing:.04em;
+  }
+  .prog-track { height:2px;background:var(--hairline);border-radius:2px;overflow:hidden; }
+  .prog-fill  {
+    height:100%;width:62%;
+    background:linear-gradient(90deg,var(--vp-sky-deep),var(--vp-sky-2));
+    border-radius:2px;
+  }
+
+  .foot {
+    position:fixed;bottom:22px;left:0;right:0;
+    display:flex;align-items:center;justify-content:center;gap:8px;z-index:2;
+  }
+  .foot-dot { width:3px;height:3px;border-radius:50%;background:var(--ink-4); }
+  .foot-text { font-family:var(--font-mono);font-size:10.5px;color:var(--ink-4);letter-spacing:.06em; }
+
+  @media (max-width: 800px) {
+    .page { flex-direction:column; gap:32px; padding:40px 24px 80px; }
+    .headline { font-size:38px; }
+    .card { width:100%; }
+    .left { max-width:100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="orb o1"></div>
+  <div class="orb o2"></div>
+  <div class="orb o3"></div>
+  <div class="noise"></div>
+</div>
+
+<div class="page">
+  <div class="left">
+    <div class="logo-row">
+      <img class="logo-img" src="/logo-nobg.png" alt="VeilPay"/>
+      <span class="logo-name">VeilPay</span>
+    </div>
+
+    <div class="eyebrow">Scheduled Maintenance</div>
+
+    <h1 class="headline">We're moving<br/>to <em>Mainnet.</em></h1>
+
+    <p class="body-copy">
+      VeilPay is temporarily offline while we complete our migration from Devnet to Mainnet.
+      Private payment links will be back shortly — live on Solana.
+    </p>
+
+    <div class="pills">
+      <div class="pill pill-live">
+        <span class="pulse-dot"></span>
+        Migration in progress
+      </div>
+      <div class="pill pill-eta">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Back soon
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Migration Status</div>
+
+    <div class="track">
+      <div class="track-node">
+        <div class="t-icon done">✓</div>
+        <div class="t-text">
+          <span class="t-title">Devnet validation</span>
+          <span class="t-sub">All flows verified end-to-end</span>
+        </div>
+        <span class="t-badge b-done">Done</span>
+      </div>
+
+      <div class="connector"></div>
+
+      <div class="track-node active">
+        <div class="t-icon active">⬡</div>
+        <div class="t-text">
+          <span class="t-title">Deploying to Mainnet</span>
+          <span class="t-sub">Contracts &amp; indexer sync</span>
+        </div>
+        <span class="t-badge b-active">Live now</span>
+      </div>
+
+      <div class="connector"></div>
+
+      <div class="track-node">
+        <div class="t-icon pending">◎</div>
+        <div class="t-text">
+          <span class="t-title">Service restored</span>
+          <span class="t-sub">Send &amp; claim on Mainnet</span>
+        </div>
+        <span class="t-badge b-pending">Next</span>
+      </div>
+    </div>
+
+    <div class="prog">
+      <div class="prog-labels">
+        <span>DEVNET</span>
+        <span>62% migrated</span>
+        <span>MAINNET</span>
+      </div>
+      <div class="prog-track">
+        <div class="prog-fill"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="foot">
+  <span class="foot-text">veilpay.xyz</span>
+  <span class="foot-dot"></span>
+  <span class="foot-text">Private Payments on Solana</span>
+</div>
+
+</body>
+</html>
