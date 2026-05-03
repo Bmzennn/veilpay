@@ -152,19 +152,24 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
   const provider: IZkAssetProvider = {
     async getAssetUrls(type: string, variant?: string): Promise<{ zkeyUrl: string; wasmUrl: string }> {
       if (!manifestCache) {
-        const res = await fetch(
-          `/api/zk-proxy?url=${encodeURIComponent(`${CDN_BASE}/manifest.json`)}`
-        );
-        if (!res.ok) throw new Error(`ZK manifest fetch failed (${res.status})`);
-        
-        const text = await res.text();
-        if (!text) throw new Error("ZK manifest is empty");
-        
-        try {
-          manifestCache = JSON.parse(text) as Manifest;
-        } catch (e) {
-          throw new Error(`Failed to parse ZK manifest: ${e instanceof Error ? e.message : String(e)}`);
+        // Retry up to 3 times with exponential back-off — transient CDN 502s are common
+        let lastError: Error = new Error("ZK manifest fetch failed");
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const res = await fetch(
+              `/api/zk-proxy?url=${encodeURIComponent(`${CDN_BASE}/manifest.json`)}`
+            );
+            if (!res.ok) throw new Error(`ZK manifest fetch failed (${res.status})`);
+            const text = await res.text();
+            if (!text) throw new Error("ZK manifest is empty");
+            manifestCache = JSON.parse(text) as Manifest;
+            break;
+          } catch (e) {
+            lastError = e instanceof Error ? e : new Error(String(e));
+            if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 1500));
+          }
         }
+        if (!manifestCache) throw lastError;
       }
 
       const assetEntry = manifestCache.assets[type];
@@ -319,11 +324,10 @@ function normalizeError(err: unknown): string {
 // ─── Skip-preflight transaction forwarder ────────────────────────────────────
 // We use a custom forwarder for two reasons:
 //   1. The polling forwarder runs preflight simulation with `preflightCommitment`.
-//      On devnet, the simulation may run against a slot that hasn't propagated
-//      the proof account created by the preceding transaction, causing spurious
-//      failures.  Skipping preflight sends directly to the validator, which has
-//      the confirmed state.
-//   2. Public devnet WebSocket endpoints are unreliable.
+//      Simulation runs against a recent slot that may not yet include the proof
+//      account created by the preceding transaction, causing spurious failures.
+//      Skipping preflight sends directly to the validator, which has confirmed state.
+//   2. Polling is more reliable than WebSocket subscriptions under network load.
 
 function encodeTransactionToWire(
   messageBytes: Uint8Array,
@@ -902,8 +906,8 @@ export async function makeClient(
     ? makeSkipPreflightForwarder()
     : getPollingTransactionForwarder({ rpcUrl: RPC_URL });
 
-  // Always use polling computation monitor — devnet WebSocket endpoints drop
-  // unpredictably, which caused the ephemeral registration tx to hang at
+  // Always use polling computation monitor — WebSocket subscriptions are
+  // less reliable under load and caused registration txs to hang at
   // "Registering privacy channel…" even after confirming on-chain.
   const computationMonitor = getPollingComputationMonitor({ rpcUrl: RPC_URL });
 
@@ -929,7 +933,7 @@ export async function registerAccount(
   let client: Awaited<ReturnType<typeof makeClient>>;
   try {
     // Use skip-preflight for ephemeral registration — the polling forwarder's
-    // preflight simulation can fail on congested devnet, causing "Failed to fetch".
+    // preflight simulation can fail on a congested cluster, causing "Failed to fetch".
     client = await makeClient(signer, { skipPreflight: true });
   } catch (e) {
     throw new Error(`[3a makeClient] ${e instanceof Error ? e.message : String(e)}`);
@@ -1648,17 +1652,14 @@ export interface ClaimArgs {
   linkId: string | null;
   recipientAddress: string;
   onStatusChange: (msg: string) => void;
-  /**
-   * For wallet-locked links: the address the link is locked to.
-   * When set, `signMessage` must also be provided.
-   */
+  /** For wallet-locked links: the address the link is locked to. */
   lockedTo?: string;
   /**
    * Signs arbitrary bytes with the recipient's connected wallet.
-   * Required when `lockedTo` is set — used to prove wallet ownership
-   * to the server before the DB claim record is written.
+   * Required for all claims — the server verifies wallet ownership before
+   * writing the DB claim record, even for open (unlocked) links.
    */
-  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
+  signMessage: (message: Uint8Array) => Promise<Uint8Array>;
 }
 
 export interface ClaimResult {
@@ -1904,29 +1905,28 @@ export async function claimPaymentLink({
       withdrawResult.queueSignature.toString();
 
     // Mark link as claimed in DB.
-    // For wallet-locked links, include a signed auth payload so the server
-    // can verify wallet ownership before writing the claimed_by record.
+    // The server requires a wallet signature for ALL claims (open + locked) to
+    // prevent griefing. Sign unconditionally and fire-and-forget.
     if (linkId) {
-      const patchBody: Record<string, unknown> = { claimer_address: recipientAddress };
+      try {
+        const timestamp = Math.floor(Date.now() / 1000);
+        const message = `VeilPay claim: ${linkId} by ${recipientAddress} at ${timestamp}`;
+        const sigBytes = await signMessage(new TextEncoder().encode(message));
+        const signatureB64 = Buffer.from(sigBytes).toString("base64");
 
-      if (lockedTo && signMessage) {
-        try {
-          const timestamp = Math.floor(Date.now() / 1000);
-          const message = `VeilPay claim: ${linkId} by ${recipientAddress} at ${timestamp}`;
-          const sigBytes = await signMessage(new TextEncoder().encode(message));
-          patchBody.signature = Buffer.from(sigBytes).toString("base64");
-          patchBody.timestamp = timestamp;
-        } catch {
-          // Signing failed — still send without signature; server will reject
-          // for locked links but we let the server decide rather than silently drop.
-        }
+        fetch(`/api/links?id=${encodeURIComponent(linkId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            claimer_address: recipientAddress,
+            signature: signatureB64,
+            timestamp,
+          }),
+        }).catch(() => {});
+      } catch {
+        // Signing failed — DB record won't be marked claimed, but on-chain claim
+        // already succeeded. The link will expire naturally and funds are safe.
       }
-
-      fetch(`/api/links?id=${encodeURIComponent(linkId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patchBody),
-      }).catch(() => {});
     }
 
     return { signature };

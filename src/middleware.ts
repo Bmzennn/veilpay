@@ -7,10 +7,13 @@ export function middleware(req: NextRequest) {
 
   const { pathname } = req.nextUrl;
 
-  // Always pass through: the maintenance page itself, static assets, and favicons
+  // Always pass through: maintenance page, static assets, and all API routes
+  // (API routes must remain accessible so ZK provers and payment flows work
+  //  even when the UI is in maintenance mode)
   if (
     pathname === "/maintenance.html" ||
     pathname.startsWith("/_next/") ||
+    pathname.startsWith("/api/") ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/apple-icon") ||
     pathname.startsWith("/icon") ||
