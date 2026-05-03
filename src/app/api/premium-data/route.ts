@@ -1,14 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Connection } from "@solana/web3.js";
 import { verifyX402Deposit } from "@/lib/x402";
-import { RPC_URL } from "@/lib/constants";
+import { RPC_URL, TOKEN_CONFIG } from "@/lib/constants";
 import { getSupabaseServiceClient } from "@/lib/supabase";
 import { getClientIp } from "@/lib/rateLimit";
 import { securityLog } from "@/lib/securityLog";
+import type { Token } from "@/types";
 
 const SERVER_SOLANA_ADDRESS = process.env.NEXT_PUBLIC_X402_SERVER_ADDRESS || "";
 
-const INVOICE_AMOUNT_SOL = 0.1;
+// Token config — override via NEXT_PUBLIC_INVOICE_TOKEN env var (default: SOL)
+const INVOICE_TOKEN  = (process.env.NEXT_PUBLIC_INVOICE_TOKEN || "SOL") as Token;
+const INVOICE_AMOUNT = Number(process.env.NEXT_PUBLIC_INVOICE_AMOUNT || "0.1");
+const _tokenCfg      = TOKEN_CONFIG[INVOICE_TOKEN] ?? TOKEN_CONFIG["SOL"];
+// Allow per-network mint override (e.g. devnet USDC differs from mainnet)
+const INVOICE_MINT     = (INVOICE_TOKEN === "USDC" && process.env.NEXT_PUBLIC_USDC_MINT)
+  ? process.env.NEXT_PUBLIC_USDC_MINT
+  : _tokenCfg.mint;
+const INVOICE_DECIMALS = _tokenCfg.decimals;
+
 const INVOICE_TTL_MS = 10 * 60 * 1000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 5;
@@ -119,8 +129,9 @@ export async function GET(req: NextRequest) {
         error: "Payment Required",
         message: "This is a premium endpoint. Please remit payment via Umbra Shielded UTXO.",
         invoice: {
-          amount: INVOICE_AMOUNT_SOL,
-          token: "SOL",
+          amount: INVOICE_AMOUNT,
+          token:  INVOICE_TOKEN,
+          mint:   INVOICE_MINT,
           destination: SERVER_SOLANA_ADDRESS,
           invoiceId: invoiceIdHex,
         },
@@ -175,11 +186,14 @@ export async function GET(req: NextRequest) {
 
     const isValid = await verifyX402Deposit({
       connection,
-      proofTxSignature:   proofTxSig,
-      depositTxSignature: depositTxSig,
+      proofTxSignature:    proofTxSig,
+      depositTxSignature:  depositTxSig,
       serverSolanaAddress: SERVER_SOLANA_ADDRESS,
       expectedInvoiceId,
-      expectedAmountSol: INVOICE_AMOUNT_SOL,
+      expectedAmount:   INVOICE_AMOUNT,
+      expectedToken:    INVOICE_TOKEN,
+      expectedMint:     INVOICE_MINT,
+      expectedDecimals: INVOICE_DECIMALS,
     });
 
     if (!isValid) {
@@ -196,8 +210,8 @@ export async function GET(req: NextRequest) {
           proofTx:    proofTxSig,
           depositTx:  depositTxSig,
           invoiceId:  invoiceIdHex,
-          amountPaid: INVOICE_AMOUNT_SOL,
-          token:      "SOL",
+          amountPaid: INVOICE_AMOUNT,
+          token:      INVOICE_TOKEN,
         },
       },
     });
