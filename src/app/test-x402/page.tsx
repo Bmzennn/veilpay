@@ -131,7 +131,7 @@ export default function TestX402Page() {
       // 6. Retry with x402 Authorization header
       const finalRes = await fetch("/api/premium-data", {
         headers: {
-          "Authorization": `x402 ${proofTxSig}:${depositSig}:${invoice.invoiceId}`,
+          "X-402-Payment": `x402 ${proofTxSig}:${depositSig}:${invoice.invoiceId}`,
         },
       });
 

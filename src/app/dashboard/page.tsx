@@ -15,7 +15,7 @@ import {
 import {
   createBrowserSigner, makeClient, makeZkProverDeps,
   clearZkCache, getRecentTreeIndices, ensureAssociatedTokenAccount,
-  shieldFunds, type U32,
+  shieldFunds, auditLinkStatus, type U32, type LinkAuditResult,
 } from "@/lib/umbra";
 import { getSolBalance, getPublicTokenBalance } from "@/lib/solana";
 import { getClaimReceiverClaimableUtxoIntoEncryptedBalanceProver } from "@umbra-privacy/web-zk-prover";
@@ -25,7 +25,8 @@ import type { Address } from "@solana/kit";
 import {
   RefreshCw, Trash2, ArrowDownToLine, Inbox,
   Check, AlertTriangle, Plus, X, Shield, Lock, Unlock,
-  ExternalLink,
+  ExternalLink, Wallet, ArrowLeftRight, Key, Search, Clock,
+  Eye, EyeOff, Layers, ArrowRight as ArrowRightIcon,
 } from "lucide-react";
 
 type BalanceState = "shared" | "not_shared" | "none";
@@ -41,7 +42,7 @@ interface TokenBalance {
 function formatAmount(raw: bigint, decimals: number): string {
   if (raw === 0n) return "—";
   const n = Number(raw) / 10 ** decimals;
-  return decimals >= 6 ? n.toFixed(2) : n.toFixed(4);
+  return n.toFixed(4);
 }
 
 function formatSol(raw: bigint): string {
@@ -53,7 +54,7 @@ const ALL_TOKENS = Object.keys(TOKEN_CONFIG) as Token[];
 
 const TOKEN_LOGOS: Record<Token, string> = {
   SOL: "/tokens/sol.png", USDC: "/tokens/usdc.png", USDT: "/tokens/usdt.png",
-  BONK: "/tokens/bonk.png", JUP: "/tokens/jup.png", WIF: "/tokens/wif.png",
+  UMBRA: "/tokens/umbra.png", CASH: "/tokens/cash.png",
 };
 
 const CLAIMED_UTXOS_KEY = "vp_claimed_utxo_indices";
@@ -104,7 +105,7 @@ function WithdrawModal({ token, maxHuman, onClose, onConfirm }: WithdrawModalPro
             <input
               autoFocus
               type="number"
-              placeholder="0.00"
+              placeholder="0.0000"
               className="modal-input"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
@@ -192,7 +193,7 @@ function ShieldModal({ token, maxHuman, onClose, onConfirm }: ShieldModalProps) 
             <input
               autoFocus
               type="number"
-              placeholder="0.00"
+              placeholder="0.0000"
               className="modal-input"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
@@ -264,6 +265,71 @@ export default function DashboardPage() {
   // Modal state
   const [withdrawModal, setWithdrawModal] = useState<Token | null>(null);
   const [shieldModal, setShieldModal] = useState<Token | null>(null);
+
+  // ── Flip card state ──────────────────────────────────────────────────────────
+  const [face, setFace] = useState<"encrypted" | "public">("encrypted");
+  const [isFlipping, setIsFlipping] = useState(false);
+  const [cipherActive, setCipherActive] = useState(false);
+  const [cipherTick, setCipherTick] = useState(0); // increments to drive re-renders
+  const flipTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const cipherInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const handleFlip = useCallback(() => {
+    if (isFlipping) return;
+    setIsFlipping(true);
+    // t=250ms: start cipher scramble on incoming face
+    const t1 = setTimeout(() => {
+      setCipherActive(true);
+      cipherInterval.current = setInterval(() => setCipherTick(n => n + 1), 40);
+    }, 250);
+    // t=370ms: resolve cipher + swap face
+    const t2 = setTimeout(() => {
+      if (cipherInterval.current) { clearInterval(cipherInterval.current); cipherInterval.current = null; }
+      setCipherActive(false);
+      setFace(f => f === "encrypted" ? "public" : "encrypted");
+    }, 370);
+    // t=560ms: done
+    const t3 = setTimeout(() => setIsFlipping(false), 560);
+    flipTimers.current = [t1, t2, t3];
+  }, [isFlipping]);
+
+  useEffect(() => {
+    const timers = flipTimers.current;
+    const interval = cipherInterval.current;
+    return () => { timers.forEach(clearTimeout); if (interval) clearInterval(interval); };
+  }, []);
+
+  // ── Dashboard tabs ───────────────────────────────────────────────────────────
+  const [dashTab, setDashTab] = useState<"balances" | "audit">("balances");
+
+  // ── Audit tab state ──────────────────────────────────────────────────────────
+  const [auditInput, setAuditInput] = useState("");
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditResult, setAuditResult] = useState<LinkAuditResult | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
+
+  const handleAudit = async () => {
+    const secret = auditInput.trim().replace(/^#/, "");
+    if (!secret) return;
+    setAuditError(null);
+    setAuditResult(null);
+    setAuditLoading(true);
+    try {
+      const r = await auditLinkStatus(secret);
+      setAuditResult(r);
+    } catch (err) {
+      setAuditError(err instanceof Error ? err.message : "Audit failed");
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const AUDIT_STATUS = {
+    pending:    { label: "Awaiting claim",             color: "#d97706", dot: "rgba(245,158,11,.8)" },
+    in_transit: { label: "Claimed — withdrawal pending", color: "var(--vp-sky-deep)", dot: "var(--vp-sky)" },
+    complete:   { label: "Delivered",                  color: "#059669", dot: "rgba(16,185,129,.8)" },
+    not_found:  { label: "Not found",                  color: "#dc2626", dot: "rgba(239,68,68,.8)" },
+  } as const;
 
   const getClaimedIndices = useCallback((): Set<string> => {
     if (typeof window === "undefined") return new Set();
@@ -401,7 +467,7 @@ export default function DashboardPage() {
           const availableRaw = BigInt(freshBal.balance.toString());
           const requestedRaw = BigInt(Math.round(parseFloat(amountStr) * 10 ** tokenCfg.decimals));
           if (requestedRaw > availableRaw) {
-            const availHuman = (Number(availableRaw) / 10 ** tokenCfg.decimals).toFixed(tokenCfg.decimals === 6 ? 2 : 4);
+            const availHuman = (Number(availableRaw) / 10 ** tokenCfg.decimals).toFixed(4);
             throw new Error(`Insufficient balance. Max available: ${availHuman} ${token}`);
           }
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -559,236 +625,29 @@ export default function DashboardPage() {
         : formatAmount(shieldModalBal.publicRaw, TOKEN_CONFIG[shieldModal!].decimals))
     : "0";
 
+  // ── Cipher helpers ───────────────────────────────────────────────────────────
+  void cipherTick; // used to force re-renders during cipher animation
+  const CIPHER = "01█▓▒░⣿⠿01100101";
+  const cipher = (s: string) => cipherActive
+    ? s.split("").map(c => /[0-9.]/.test(c) ? CIPHER[Math.floor(Math.random() * CIPHER.length)] : c).join("")
+    : s;
+
+  // Token rows for each face
+  const encryptedRows = balances.filter(b => b.encryptedRaw > 0n || b.encryptedState === "shared");
+  const publicRows = balances.filter(b => b.publicRaw > 0n);
+
+  // Public total USD
+  const publicTotalUsd = balances.reduce((sum, b) => {
+    if (b.publicRaw === 0n) return sum;
+    const decimals = b.token === "SOL" ? 9 : TOKEN_CONFIG[b.token].decimals;
+    return sum + (Number(b.publicRaw) / 10 ** decimals) * (tokenPrices[b.token] ?? 0);
+  }, 0);
+  const publicUsdDisplay = !hasPrices ? "$—"
+    : `$${publicTotalUsd < 0.01 ? publicTotalUsd.toFixed(4) : publicTotalUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+
   return (
     <AppShell active="dashboard">
-      {/* ── Header ── */}
-      <section className="app-head">
-        <div className="container" style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 24, flexWrap: "wrap" }}>
-          <div>
-            <span className="eyebrow">Dashboard</span>
-            <h1 className="h2">Your <em>shielded</em> account.</h1>
-            <p className="lead">Private balances are client-side only — nothing is visible on-chain.</p>
-          </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <a href="/create" className="btn btn-primary btn-sm"><Plus size={13} /> Send</a>
-            <button className="btn btn-glass btn-sm" onClick={() => clearZkCache().then(() => setStatus("ZK cache cleared."))} title="Clear ZK cache"><Trash2 size={13} /></button>
-            <button className="btn btn-glass btn-sm" onClick={refresh} disabled={globalLoading} title="Refresh">
-              <RefreshCw size={13} style={{ animation: globalLoading ? "spin 1s linear infinite" : "none" }} />
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section className="app-section">
-        <div className="container" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {!connected ? (
-            <div className="card glass" style={{ padding: 64, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 96, height: 96, objectFit: "contain", opacity: 0.4 }} />
-              <p style={{ color: "var(--ink-3)", margin: 0 }}>Connect your wallet to view your balances.</p>
-              <ConnectWalletButton variant="primary" />
-            </div>
-          ) : (
-            <>
-              {/* ── Pending UTXOs banner ── */}
-              {pendingUtxoCount > 0 && (
-                <div className="card glass" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "14px 20px", flexWrap: "wrap" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(245,158,11,0.12)", border: "0.5px solid rgba(245,158,11,0.25)", color: "#d97706", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <Inbox size={15} />
-                    </div>
-                    <div>
-                      <p style={{ fontSize: 13.5, fontWeight: 500, margin: 0 }}>{pendingUtxoCount} pending payment{pendingUtxoCount > 1 ? "s" : ""}</p>
-                      <p style={{ fontSize: 11.5, color: "var(--ink-3)", margin: 0 }}>{(Number(pendingUtxoSol) / 1e9).toFixed(4)} SOL waiting to enter encrypted balance</p>
-                    </div>
-                  </div>
-                  <button className="btn btn-primary btn-sm" onClick={claimPending} disabled={claimLoading}>
-                    {claimLoading ? "Claiming…" : "Claim now"}
-                  </button>
-                </div>
-              )}
-
-              {/* ── Balance overview cards ── */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "stretch" }} className="dash-overview">
-                {/* Encrypted balance */}
-                <div className="card glass card-pad-lg reveal in" style={{ display: "flex", flexDirection: "column" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(0,179,255,0.12)", border: "0.5px solid rgba(0,179,255,0.25)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <Lock size={13} style={{ color: "var(--vp-sky-deep)" }} />
-                    </div>
-                    <span className="stat-label" style={{ margin: 0 }}>Encrypted Balance</span>
-                  </div>
-
-                  <div className="stat-value" style={{ fontSize: 38, lineHeight: 1.1 }}><em>{encryptedUsdDisplay}</em></div>
-
-                  <div style={{ marginTop: 16, flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-                    {balances.filter((b) => b.encryptedRaw > 0n).length > 0 ? (
-                      balances.filter((b) => b.encryptedRaw > 0n).map((b) => (
-                        <div key={b.token} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={TOKEN_LOGOS[b.token]} alt={b.token} style={{ width: 16, height: 16, borderRadius: "50%", flexShrink: 0 }} />
-                          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--ink-2)", flex: 1 }}>
-                            <strong style={{ fontFamily: "var(--font-mono)" }}>{formatAmount(b.encryptedRaw, TOKEN_CONFIG[b.token].decimals)}</strong> {b.token}
-                          </span>
-                          {b.encryptedState !== "shared" && (
-                            <span style={{ fontSize: 10, color: "#d97706", background: "rgba(245,158,11,0.1)", padding: "1px 6px", borderRadius: 4, flexShrink: 0 }}>pending</span>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <p style={{ fontSize: 12.5, color: "var(--ink-4)", margin: 0 }}>No encrypted balance yet.</p>
-                    )}
-                  </div>
-
-                  <div style={{ marginTop: 20, paddingTop: 16, borderTop: "0.5px solid var(--hairline)" }}>
-                    <button
-                      className="btn btn-glass btn-sm"
-                      style={{ width: "100%", justifyContent: "center", fontSize: 12, gap: 6 }}
-                      disabled={!hasEncryptedBalance}
-                      onClick={() => { const t = withdrawableBals[0]?.token; if (t) setWithdrawModal(t); }}
-                    >
-                      <ArrowDownToLine size={12} /> Withdraw to wallet
-                    </button>
-                  </div>
-                </div>
-
-                {/* Public balance */}
-                <div className="card glass card-pad-lg reveal in" style={{ display: "flex", flexDirection: "column" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(107,124,255,0.1)", border: "0.5px solid rgba(107,124,255,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <Unlock size={13} style={{ color: "var(--vp-violet)" }} />
-                    </div>
-                    <span className="stat-label" style={{ margin: 0 }}>Public Balance</span>
-                  </div>
-
-                  <div className="stat-value" style={{ fontSize: 38, lineHeight: 1.1 }}>
-                    <em style={{ color: "var(--vp-violet)" }}>{formatSol(publicSolBalance)}</em>
-                    <span style={{ fontSize: 15, color: "var(--ink-3)", fontFamily: "var(--font-sans)", fontWeight: 400, fontStyle: "normal", marginLeft: 6 }}>SOL</span>
-                  </div>
-
-                  <div style={{ marginTop: 16, flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-                    {balances.filter((b) => b.token !== "SOL" && b.publicRaw > 0n).length > 0 ? (
-                      balances.filter((b) => b.token !== "SOL" && b.publicRaw > 0n).map((b) => (
-                        <div key={b.token} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={TOKEN_LOGOS[b.token]} alt={b.token} style={{ width: 16, height: 16, borderRadius: "50%", flexShrink: 0 }} />
-                          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--ink-2)" }}>
-                            <strong style={{ fontFamily: "var(--font-mono)" }}>{formatAmount(b.publicRaw, TOKEN_CONFIG[b.token].decimals)}</strong> {b.token}
-                          </span>
-                        </div>
-                      ))
-                    ) : (
-                      <p style={{ fontSize: 12.5, color: "var(--ink-4)", margin: 0 }}>Only SOL detected.</p>
-                    )}
-                  </div>
-
-                  <div style={{ marginTop: 20, paddingTop: 16, borderTop: "0.5px solid var(--hairline)" }}>
-                    <button
-                      className="btn btn-sm"
-                      style={{ width: "100%", justifyContent: "center", fontSize: 12, gap: 6, background: "rgba(107,124,255,0.1)", border: "0.5px solid rgba(107,124,255,0.3)", color: "var(--vp-violet)", borderRadius: "var(--radius-pill)", cursor: shieldableBals.length === 0 ? "not-allowed" : "pointer", opacity: shieldableBals.length === 0 ? 0.4 : 1 }}
-                      disabled={shieldableBals.length === 0}
-                      onClick={() => { const t = shieldableBals[0]?.token; if (t) setShieldModal(t); }}
-                    >
-                      <Shield size={12} /> Shield to encrypted
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Token table ── */}
-              <div className="card glass reveal in" style={{ padding: 0, overflow: "hidden" }}>
-                {/* Header row — columns must exactly mirror data rows */}
-                <div className="bal-row bal-header">
-                  <span style={{ gridArea: "token" }}>Token</span>
-                  <span style={{ gridArea: "pub", textAlign: "right" }}>Public</span>
-                  <span style={{ gridArea: "enc", textAlign: "right" }}>Encrypted</span>
-                  <span style={{ gridArea: "shield" }} />
-                  <span style={{ gridArea: "withdraw" }} />
-                </div>
-
-                {balances.map((b) => {
-                  const cfg = TOKEN_CONFIG[b.token];
-                  const isWithdrawable = b.encryptedState === "shared" && b.encryptedRaw > 0n;
-                  const isShieldable = b.publicRaw > 0n;
-                  const publicDisplay = b.token === "SOL"
-                    ? (b.publicRaw > 0n ? formatSol(b.publicRaw) : "—")
-                    : formatAmount(b.publicRaw, cfg.decimals);
-                  const encDisplay = formatAmount(b.encryptedRaw, cfg.decimals);
-                  const isBusy = b.withdrawing || b.shielding;
-
-                  return (
-                    <div key={b.token} className="bal-row bal-data">
-                      {/* Token identity */}
-                      <div style={{ gridArea: "token", display: "flex", alignItems: "center", gap: 12 }}>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={TOKEN_LOGOS[b.token]} alt={b.token} style={{ width: 32, height: 32, borderRadius: "50%", flexShrink: 0 }} />
-                        <div>
-                          <p style={{ fontSize: 13.5, fontWeight: 500, margin: 0 }}>{b.token}</p>
-                          <p style={{ fontSize: 11, color: "var(--ink-3)", margin: 0 }}>{cfg.name}</p>
-                        </div>
-                      </div>
-
-                      {/* Public balance */}
-                      <div style={{ gridArea: "pub", textAlign: "right" }}>
-                        <p style={{ fontSize: 13, fontFamily: "var(--font-mono)", margin: 0, color: isShieldable ? "var(--ink)" : "var(--ink-4)" }}>{publicDisplay}</p>
-                        <p style={{ fontSize: 9.5, color: "var(--ink-4)", margin: 0, letterSpacing: "0.05em", textTransform: "uppercase" }}>Public</p>
-                      </div>
-
-                      {/* Encrypted balance */}
-                      <div style={{ gridArea: "enc", textAlign: "right" }}>
-                        <p style={{ fontSize: 13, fontFamily: "var(--font-mono)", margin: 0, color: isWithdrawable ? "var(--vp-sky-deep)" : "var(--ink-4)" }}>{encDisplay}</p>
-                        {b.encryptedRaw > 0n && b.encryptedState !== "shared"
-                          ? <p style={{ fontSize: 9.5, color: "#d97706", margin: 0, letterSpacing: "0.05em", textTransform: "uppercase" }}>Pending</p>
-                          : <p style={{ fontSize: 9.5, color: "var(--ink-4)", margin: 0, letterSpacing: "0.05em", textTransform: "uppercase" }}>Encrypted</p>
-                        }
-                      </div>
-
-                      {/* Shield */}
-                      <div style={{ gridArea: "shield" }}>
-                        <button
-                          className="btn btn-glass btn-sm bal-action"
-                          disabled={!isShieldable || isBusy}
-                          onClick={() => setShieldModal(b.token)}
-                          style={isShieldable && !isBusy ? { border: "0.5px solid rgba(107,124,255,0.35)", color: "var(--vp-violet)" } : {}}
-                        >
-                          {b.shielding ? "…" : <><Shield size={11} /> Shield</>}
-                        </button>
-                      </div>
-
-                      {/* Withdraw */}
-                      <div style={{ gridArea: "withdraw" }}>
-                        <button
-                          className="btn btn-glass btn-sm bal-action"
-                          disabled={!isWithdrawable || isBusy}
-                          onClick={() => setWithdrawModal(b.token)}
-                        >
-                          {b.withdrawing ? "…" : <><ArrowDownToLine size={11} /> Withdraw</>}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* ── Status / Error ── */}
-              {(status || error) && (
-                <div style={{ display: "flex", alignItems: "start", gap: 12, padding: "12px 16px", borderRadius: "var(--radius-md)", border: "0.5px solid", ...(error ? { background: "rgba(220,38,38,0.06)", borderColor: "rgba(220,38,38,0.2)", color: "#dc2626" } : { background: "rgba(0,179,255,0.06)", borderColor: "rgba(0,179,255,0.2)", color: "var(--vp-sky-deep)" }) }}>
-                  {error
-                    ? <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-                    : <Check size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-                  }
-                  <p style={{ fontSize: 12.5, margin: 0, lineHeight: 1.5 }}>{error || status}</p>
-                  {error && (
-                    <button style={{ marginLeft: "auto", flexShrink: 0, padding: 4, borderRadius: 6, background: "transparent", cursor: "pointer", color: "inherit", opacity: 0.6 }} onClick={() => setError("")}>
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </section>
 
       {/* ── Modals ── */}
       {withdrawModal && withdrawModalBal && (
@@ -796,102 +655,408 @@ export default function DashboardPage() {
           token={withdrawModal}
           maxHuman={withdrawMaxHuman}
           onClose={() => setWithdrawModal(null)}
-          onConfirm={(amount) => withdraw(withdrawModal, amount)}
+          onConfirm={(amt) => withdraw(withdrawModal, amt)}
         />
       )}
-
       {shieldModal && shieldModalBal && (
         <ShieldModal
           token={shieldModal}
           maxHuman={shieldMaxHuman}
           onClose={() => setShieldModal(null)}
-          onConfirm={(amount) => shield(shieldModal, amount)}
+          onConfirm={(amt) => shield(shieldModal, amt)}
         />
       )}
 
-      <style jsx global>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
+      <section className="app-head">
+        <div className="container" style={{ maxWidth: 600 }}>
+          <span className="eyebrow">Dashboard</span>
+          <h1 className="h2">Your <em>shielded</em> account.</h1>
+        </div>
+      </section>
 
-        /* Overview cards — equal halves, collapse to single column on mobile */
-        .dash-overview { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: stretch; }
-        @media (max-width: 720px) { .dash-overview { grid-template-columns: 1fr; } }
+      <section className="app-section">
+        <div className="container" style={{ maxWidth: 600, display: "flex", flexDirection: "column", gap: 16 }}>
 
-        /* Balance table grid
-           columns: [icon+name] [public] [encrypted] [shield btn] [withdraw btn]
-           We name each area so header and data rows bind the same grid. */
-        .bal-row {
-          display: grid;
-          grid-template-columns: 1fr 110px 110px 100px 108px;
-          grid-template-areas: "token pub enc shield withdraw";
-          align-items: center;
-          gap: 0 8px;
-          padding: 13px 24px;
-          border-bottom: 1px solid var(--hairline);
-        }
-        .bal-header {
-          padding: 12px 24px;
-          font-size: 10px;
-          font-weight: 700;
-          letter-spacing: 0.07em;
-          text-transform: uppercase;
-          color: var(--ink-4);
-        }
-        .bal-action {
-          width: 100%;
-          justify-content: center;
-          font-size: 11.5px;
-          gap: 5px;
-          padding: 7px 10px;
-        }
-        @media (max-width: 680px) {
-          .bal-row { grid-template-columns: 1fr 90px 90px 80px 88px; gap: 0 4px; padding: 12px 16px; }
-          .bal-header { padding: 10px 16px; }
-        }
-        @media (max-width: 520px) {
-          .bal-row {
-            grid-template-columns: 1fr 80px;
-            grid-template-areas:
-              "token pub"
-              "enc shield"
-              ". withdraw";
-            padding: 14px 16px;
-            gap: 6px 8px;
-          }
-          .bal-header { display: none; }
-        }
+          {/* ── Tab switcher ── */}
+          <div style={{ display: "flex", borderBottom: "0.5px solid var(--hairline)", gap: 2 }}>
+            {([
+              { id: "balances" as const, label: "Balances" },
+              { id: "audit"    as const, label: "Link Audit" },
+            ]).map(t => (
+              <button key={t.id} onClick={() => setDashTab(t.id)} style={{
+                padding: "10px 18px", fontSize: 13, fontWeight: 600,
+                background: "none", border: "none", cursor: "pointer",
+                color: dashTab === t.id ? "var(--ink)" : "var(--ink-4)",
+                borderBottom: dashTab === t.id ? "2px solid var(--vp-sky)" : "2px solid transparent",
+                marginBottom: -1, transition: "all .15s",
+              }}>{t.label}</button>
+            ))}
+          </div>
 
-        /* Modal overlay */
-        .modal-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(4, 10, 20, 0.78);
-          backdrop-filter: blur(10px);
-          -webkit-backdrop-filter: blur(10px);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 1000;
-          padding: 20px;
-        }
-        .modal-input {
-          width: 100%;
-          background: var(--glass-bg-strong);
-          border: 1px solid var(--hairline-strong);
-          border-radius: var(--radius-md);
-          padding: 14px 64px 14px 18px;
-          font-size: 22px;
-          font-family: var(--font-mono);
-          color: var(--ink);
-          outline: none;
-          transition: border-color 0.18s, box-shadow 0.18s;
-        }
-        .modal-input:focus {
-          border-color: var(--vp-sky);
-          box-shadow: 0 0 0 4px rgba(0, 179, 255, 0.12);
-        }
-        .modal-input[type=number]::-webkit-outer-spin-button,
-        .modal-input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
-        .modal-input[type=number] { -moz-appearance: textfield; }
+          {/* ── BALANCES TAB ── */}
+          {dashTab === "balances" && (<>
+
+          {/* ── Not connected ── */}
+          {!connected ? (
+            <div className="card glass card-pad-lg" style={{ textAlign: "center" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 72, height: 72, objectFit: "contain", opacity: 0.3, margin: "0 auto 16px" }} />
+              <p style={{ color: "var(--ink-3)", marginBottom: 20 }}>Connect your wallet to view your balances.</p>
+              <ConnectWalletButton variant="primary" />
+            </div>
+          ) : (
+            <>
+              {/* ── Segmented state switcher ── */}
+              <div style={{ display: "flex", background: "var(--glass-bg)", border: "0.5px solid var(--glass-border)", borderRadius: 16, padding: 4, gap: 4 }}>
+                {([
+                  { id: "encrypted" as const, label: "Encrypted", icon: <Lock size={13} />, accent: "rgba(107,124,255,.12)", border: "rgba(107,124,255,.35)", color: "var(--vp-violet)" },
+                  { id: "public"    as const, label: "Public",    icon: <Unlock size={13} />, accent: "rgba(0,179,255,.10)",   border: "rgba(0,179,255,.3)",   color: "var(--vp-sky-2)" },
+                ] as const).map(tab => {
+                  const active = face === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => !isFlipping && face !== tab.id && handleFlip()}
+                      disabled={isFlipping}
+                      style={{
+                        flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                        padding: "10px 16px", borderRadius: 12, fontSize: 13, fontWeight: 600,
+                        background: active ? tab.accent : "transparent",
+                        border: active ? `0.5px solid ${tab.border}` : "0.5px solid transparent",
+                        color: active ? tab.color : "var(--ink-4)",
+                        cursor: active || isFlipping ? "default" : "pointer",
+                        transition: "all .2s",
+                      }}
+                    >
+                      {tab.icon}
+                      {tab.label} Balance
+                      {active && <ArrowLeftRight size={11} style={{ opacity: 0.5, marginLeft: 2 }} />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* ── Flip card scene ── */}
+              <div style={{ perspective: "1400px" }}>
+                <div style={{
+                  display: "grid",
+                  transformStyle: "preserve-3d",
+                  transition: "transform 560ms cubic-bezier(0.4, 0, 0.2, 1)",
+                  transform: face === "public" ? "rotateY(180deg)" : "rotateY(0deg)",
+                }}>
+
+                  {/* ── FRONT: Encrypted balance ── */}
+                  <div style={{
+                    gridArea: "1/1",
+                    backfaceVisibility: "hidden",
+                    WebkitBackfaceVisibility: "hidden",
+                  }}>
+                    <div className="card glass" style={{
+                      padding: "28px 28px 24px",
+                      background: "linear-gradient(135deg, rgba(107,124,255,.06) 0%, var(--glass-bg) 60%)",
+                      border: "0.5px solid rgba(107,124,255,.22)",
+                      position: "relative", overflow: "hidden",
+                    }}>
+                      {/* Encrypted glow */}
+                      <div style={{ position: "absolute", top: -60, right: -60, width: 200, height: 200, borderRadius: "50%", background: "radial-gradient(circle, rgba(107,124,255,.1), transparent 70%)", pointerEvents: "none" }} />
+
+                      {/* Row 1: label + refresh */}
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, position: "relative" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                          <div style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(107,124,255,.15)", border: "0.5px solid rgba(107,124,255,.3)", display: "grid", placeItems: "center" }}>
+                            <Lock size={13} style={{ color: "var(--vp-violet)" }} />
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--vp-violet)" }}>Encrypted Balance</span>
+                          <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20, background: "rgba(107,124,255,.12)", color: "rgba(107,124,255,.8)", letterSpacing: "0.06em" }}>PRIVATE</span>
+                        </div>
+                        <button onClick={refresh} disabled={globalLoading} title="Refresh"
+                          style={{ width: 30, height: 30, borderRadius: 8, background: "var(--glass-bg)", border: "0.5px solid var(--hairline)", cursor: "pointer", display: "grid", placeItems: "center" }}>
+                          <RefreshCw size={13} style={{ animation: globalLoading ? "spin 1s linear infinite" : "none", color: "var(--ink-3)" }} />
+                        </button>
+                      </div>
+
+                      {/* Total USD */}
+                      <p style={{ fontSize: 42, fontWeight: 800, letterSpacing: "-0.04em", marginBottom: 4, lineHeight: 1, color: cipherActive ? "var(--vp-violet)" : "var(--ink)", transition: "color .1s", fontFamily: "var(--font-sans)" }}>
+                        {cipher(encryptedUsdDisplay)}
+                      </p>
+                      <p style={{ fontSize: 12, color: "var(--ink-4)", marginBottom: 24 }}>Total encrypted value</p>
+
+                      {/* Token rows */}
+                      {encryptedRows.length === 0 ? (
+                        <p style={{ fontSize: 13, color: "var(--ink-4)", marginBottom: 24, fontStyle: "italic" }}>No encrypted balance yet. Shield some funds to get started.</p>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 24 }}>
+                          {encryptedRows.map(b => {
+                            const cfg = TOKEN_CONFIG[b.token];
+                            const humanAmt = formatAmount(b.encryptedRaw, cfg.decimals);
+                            const usd = (Number(b.encryptedRaw) / 10 ** cfg.decimals) * (tokenPrices[b.token] ?? 0);
+                            const usdStr = usd > 0 ? `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}` : "";
+                            return (
+                              <div key={b.token} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 12, background: "var(--glass-bg)", cursor: "pointer" }}
+                                onClick={() => setWithdrawModal(b.token)}>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={TOKEN_LOGOS[b.token]} alt={b.token} style={{ width: 28, height: 28, borderRadius: "50%", flexShrink: 0 }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <p style={{ fontSize: 14, fontWeight: 600, margin: 0, color: "var(--ink)" }}>{b.token}</p>
+                                  <p style={{ fontSize: 11, color: "var(--ink-4)", margin: 0 }}>{cfg.name}</p>
+                                </div>
+                                <div style={{ textAlign: "right" }}>
+                                  <p style={{ fontSize: 14, fontWeight: 600, margin: 0, fontFamily: "var(--font-mono)", color: cipherActive ? "var(--vp-violet)" : "var(--ink)", transition: "color .1s" }}>
+                                    {cipher(humanAmt)}
+                                  </p>
+                                  {usdStr && <p style={{ fontSize: 11, color: "var(--ink-4)", margin: 0 }}>{cipher(usdStr)}</p>}
+                                </div>
+                                {b.withdrawing ? (
+                                  <RefreshCw size={14} style={{ color: "var(--vp-sky)", animation: "spin 1s linear infinite", flexShrink: 0 }} />
+                                ) : (
+                                  <Wallet size={14} style={{ color: "var(--ink-4)", flexShrink: 0 }} />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Action row */}
+                      <div style={{ display: "flex", gap: 10 }}>
+                        {encryptedRows.length > 0 && (
+                          <button
+                            className="btn btn-glass"
+                            style={{ flex: 1, justifyContent: "center", fontSize: 13 }}
+                            onClick={() => setWithdrawModal(encryptedRows[0].token)}
+                          >
+                            <ArrowDownToLine size={13} /> Withdraw
+                          </button>
+                        )}
+                        {pendingUtxoCount > 0 && (
+                          <button
+                            className="btn btn-primary"
+                            style={{ flex: 1, justifyContent: "center", fontSize: 13, gap: 6 }}
+                            onClick={claimPending}
+                            disabled={claimLoading}
+                          >
+                            <Inbox size={13} />
+                            {claimLoading ? "Claiming…" : `Claim ${pendingUtxoCount} pending`}
+                          </button>
+                        )}
+                        {encryptedRows.length === 0 && pendingUtxoCount === 0 && (
+                          <a href="/create" className="btn btn-primary" style={{ flex: 1, justifyContent: "center", fontSize: 13 }}>
+                            <Plus size={13} /> Send a link
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── BACK: Public balance ── */}
+                  <div style={{
+                    gridArea: "1/1",
+                    backfaceVisibility: "hidden",
+                    WebkitBackfaceVisibility: "hidden",
+                    transform: "rotateY(180deg)",
+                  }}>
+                    <div className="card glass" style={{
+                      padding: "28px 28px 24px",
+                      background: "var(--glass-bg)",
+                      border: "0.5px solid var(--glass-border)",
+                      position: "relative", overflow: "hidden",
+                    }}>
+                      {/* Row 1: label */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 28 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(0,179,255,.1)", border: "0.5px solid rgba(0,179,255,.25)", display: "grid", placeItems: "center" }}>
+                          <Unlock size={13} style={{ color: "var(--vp-sky)" }} />
+                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--vp-sky-2)" }}>Public Balance</span>
+                        <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20, background: "rgba(0,179,255,.08)", color: "rgba(0,179,255,.7)", letterSpacing: "0.06em" }}>ON-CHAIN</span>
+                      </div>
+
+                      {/* Total USD */}
+                      <p style={{ fontSize: 42, fontWeight: 800, letterSpacing: "-0.04em", marginBottom: 4, lineHeight: 1, color: cipherActive ? "var(--vp-sky)" : "var(--ink)", transition: "color .1s", fontFamily: "var(--font-sans)" }}>
+                        {cipher(publicUsdDisplay)}
+                      </p>
+                      <p style={{ fontSize: 12, color: "var(--ink-4)", marginBottom: 24 }}>Total public value</p>
+
+                      {/* Token rows */}
+                      {publicRows.length === 0 ? (
+                        <p style={{ fontSize: 13, color: "var(--ink-4)", marginBottom: 24, fontStyle: "italic" }}>No public balance detected on this wallet.</p>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 24 }}>
+                          {publicRows.map(b => {
+                            const cfg = TOKEN_CONFIG[b.token];
+                            const humanAmt = b.token === "SOL" ? formatSol(b.publicRaw) : formatAmount(b.publicRaw, cfg.decimals);
+                            const usd = (Number(b.publicRaw) / 10 ** (b.token === "SOL" ? 9 : cfg.decimals)) * (tokenPrices[b.token] ?? 0);
+                            const usdStr = usd > 0 ? `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}` : "";
+                            return (
+                              <div key={b.token} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 12, background: "var(--glass-bg)", cursor: "pointer" }}
+                                onClick={() => setShieldModal(b.token)}>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={TOKEN_LOGOS[b.token]} alt={b.token} style={{ width: 28, height: 28, borderRadius: "50%", flexShrink: 0 }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <p style={{ fontSize: 14, fontWeight: 600, margin: 0, color: "var(--ink)" }}>{b.token}</p>
+                                  <p style={{ fontSize: 11, color: "var(--ink-4)", margin: 0 }}>{cfg.name}</p>
+                                </div>
+                                <div style={{ textAlign: "right" }}>
+                                  <p style={{ fontSize: 14, fontWeight: 600, margin: 0, fontFamily: "var(--font-mono)", color: cipherActive ? "var(--vp-sky)" : "var(--ink)", transition: "color .1s" }}>
+                                    {cipher(humanAmt)}
+                                  </p>
+                                  {usdStr && <p style={{ fontSize: 11, color: "var(--ink-4)", margin: 0 }}>{cipher(usdStr)}</p>}
+                                </div>
+                                {b.shielding ? (
+                                  <RefreshCw size={14} style={{ color: "var(--vp-violet)", animation: "spin 1s linear infinite", flexShrink: 0 }} />
+                                ) : (
+                                  <Shield size={14} style={{ color: "var(--ink-4)", flexShrink: 0 }} />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Action row */}
+                      <div style={{ display: "flex", gap: 10 }}>
+                        {publicRows.length > 0 && (
+                          <button
+                            className="btn btn-glass"
+                            style={{ flex: 1, justifyContent: "center", fontSize: 13, background: "linear-gradient(180deg, rgba(107,124,255,.08), rgba(107,124,255,.04))", borderColor: "rgba(107,124,255,.25)", color: "var(--vp-violet)" }}
+                            onClick={() => setShieldModal(publicRows[0].token)}
+                          >
+                            <Shield size={13} /> Shield funds
+                          </button>
+                        )}
+                        <a href="/create" className="btn btn-primary" style={{ flex: 1, justifyContent: "center", fontSize: 13 }}>
+                          <Plus size={13} /> Send
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Status / error ── */}
+              {(status || error) && (
+                <div style={{ padding: "12px 16px", borderRadius: 12, background: error ? "rgba(239,68,68,.08)" : "rgba(0,179,255,.06)", border: `0.5px solid ${error ? "rgba(239,68,68,.2)" : "rgba(0,179,255,.18)"}`, display: "flex", alignItems: "center", gap: 10 }}>
+                  {error
+                    ? <AlertTriangle size={14} style={{ color: "#ef4444", flexShrink: 0 }} />
+                    : <RefreshCw size={14} style={{ color: "var(--vp-sky)", flexShrink: 0, animation: globalLoading || claimLoading ? "spin 1s linear infinite" : "none" }} />}
+                  <p style={{ fontSize: 13, color: error ? "#ef4444" : "var(--vp-sky)", margin: 0 }}>{error || status}</p>
+                  {error && (
+                    <button onClick={() => setError("")} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "var(--ink-4)" }}>
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* ── Cache clear (tucked away) ── */}
+              <div style={{ textAlign: "right" }}>
+                <button
+                  className="btn btn-glass btn-sm"
+                  style={{ fontSize: 11, gap: 4, color: "var(--ink-4)", opacity: 0.6 }}
+                  onClick={() => clearZkCache().then(() => setStatus("ZK cache cleared."))}
+                  title="Clear ZK proof cache"
+                >
+                  <Trash2 size={11} /> Clear ZK cache
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* closes BALANCES TAB wrapper */}
+          </>)}
+
+          {/* ── AUDIT TAB ── */}
+          {dashTab === "audit" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div className="card glass card-pad-lg reveal in">
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 16 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(0,179,255,.1)", border: "0.5px solid rgba(0,179,255,.2)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                    <Key size={16} style={{ color: "var(--vp-sky)" }} />
+                  </div>
+                  <div>
+                    <p style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Link receipt checker</p>
+                    <p style={{ fontSize: 13, color: "var(--ink-3)", lineHeight: 1.5, margin: 0 }}>
+                      Paste the claim secret (the part after <code style={{ fontFamily: "var(--font-mono)", fontSize: 11, padding: "1px 5px", borderRadius: 4, background: "var(--glass-bg-strong)" }}>#</code>) to check payment status.
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="text"
+                  placeholder="e.g. 3mFc…:USDC"
+                  value={auditInput}
+                  onChange={e => setAuditInput(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleAudit()}
+                  className="modal-input"
+                  style={{ marginBottom: 12 }}
+                />
+                {auditError && (
+                  <p style={{ fontSize: 13, color: "#dc2626", marginBottom: 12 }}>{auditError}</p>
+                )}
+                <button className="btn btn-primary" onClick={handleAudit} disabled={!auditInput.trim() || auditLoading}>
+                  {auditLoading ? <><Clock size={14} /> Scanning…</> : <><Search size={14} /> Check status</>}
+                </button>
+              </div>
+
+              {auditResult && (() => {
+                const cfg = AUDIT_STATUS[auditResult.status];
+                return (
+                  <div className="card glass card-pad-lg reveal in">
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: auditResult.status !== "not_found" ? 20 : 0 }}>
+                      <div style={{ width: 10, height: 10, borderRadius: "50%", background: cfg.dot, boxShadow: `0 0 8px ${cfg.dot}`, flexShrink: 0, marginTop: 5 }} />
+                      <div>
+                        <p style={{ fontSize: 15, fontWeight: 600, color: cfg.color, marginBottom: 4 }}>{cfg.label}</p>
+                        {auditResult.status !== "not_found" && (
+                          <p style={{ fontSize: 13, color: "var(--ink-2)", margin: 0, lineHeight: 1.5 }}>
+                            {auditResult.amountHuman} {auditResult.token} · ephemeral: <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{auditResult.ephemeralAddress.slice(0, 8)}…{auditResult.ephemeralAddress.slice(-6)}</span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    {auditResult.status === "complete" && (
+                      <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+                        <a href="/create" className="btn btn-glass btn-sm" style={{ fontSize: 12, gap: 5 }}>
+                          <ArrowRightIcon size={12} /> New payment
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Privacy explainer — compact */}
+              <div className="card glass" style={{ padding: "16px 20px" }}>
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+                      <Eye size={13} style={{ color: "var(--vp-sky)" }} />
+                      <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--ink-4)" }}>Reveals</span>
+                    </div>
+                    {["Status (pending/claimed/delivered)", "Amount & token", "Ephemeral hop address"].map(s => (
+                      <p key={s} style={{ fontSize: 12, color: "var(--ink-2)", margin: "0 0 4px", lineHeight: 1.4 }}>· {s}</p>
+                    ))}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+                      <EyeOff size={13} style={{ color: "#059669" }} />
+                      <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--ink-4)" }}>Never reveals</span>
+                    </div>
+                    {["Sender's wallet", "Recipient's wallet", "On-chain link between parties"].map(s => (
+                      <p key={s} style={{ fontSize: 12, color: "var(--ink-2)", margin: "0 0 4px", lineHeight: 1.4 }}>· {s}</p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <style>{`
+        @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+        .modal-overlay { position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:24px;z-index:1000; }
+        .modal-input { width:100%;background:var(--glass-bg);border:0.5px solid var(--glass-border);border-radius:12px;padding:12px 14px;color:var(--ink);font-size:16px;font-family:var(--font-sans);outline:none;transition:border-color .15s;box-sizing:border-box; }
+        .modal-input:focus { border-color:rgba(0,179,255,.4); }
+        .modal-input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
+        .modal-input[type=number] { -moz-appearance:textfield; }
       `}</style>
     </AppShell>
   );

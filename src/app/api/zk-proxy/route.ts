@@ -11,7 +11,8 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 
-export const runtime = "edge"; // Use Edge for high-bandwidth streaming
+// Node.js runtime — no timeout constraints for large binary streaming (50–100 MB .zkey files)
+// Edge runtime's simulated fetch in webpack dev mode times out on slow CDN responses
 
 const ALLOWED_CDN_ORIGIN = "https://d3j9fjdkre529f.cloudfront.net";
 
@@ -57,14 +58,10 @@ export async function GET(request: NextRequest): Promise<Response> {
     };
     if (contentLength) headers["Content-Length"] = contentLength;
 
-    // The Edge runtime handles streaming bodies natively
     return new Response(upstream.body, { headers });
 
-  } catch (error: any) {
-    console.error("[zkProxy] Fetch crash:", error.message);
-    return NextResponse.json({ 
-        error: "CDN unreachable", 
-        details: error.message 
-    }, { status: 502 });
+  } catch (error: unknown) {
+    console.error("[zkProxy] Fetch crash:", error instanceof Error ? error.message : String(error));
+    return NextResponse.json({ error: "CDN unreachable" }, { status: 502 });
   }
 }

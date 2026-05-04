@@ -8,12 +8,13 @@ import { ConnectWalletButton } from "@/components/WalletModal";
 import { useWalletContext } from "@/components/WalletContext";
 import {
   createPaymentLink, confidentialTransfer, validateAmount, preloadCreateAssets,
+  getStrandedEphemerals, recoverStrandedEphemeral, type StrandedEphemeral,
 } from "@/lib/umbra";
 import { TOKEN_CONFIG, NETWORK } from "@/lib/constants";
 import type { Token, LinkStep, PaymentLinkMeta, PaymentMode, TransferType, ConfidentialStep } from "@/types";
 import {
   Shield, Lock, Globe, UserCheck, Send, ArrowRight, Check, Copy,
-  AlertTriangle, ExternalLink, Eye, EyeOff, ChevronDown, Plus, Timer, QrCode,
+  AlertTriangle, ExternalLink, Eye, EyeOff, ChevronDown, Plus, Timer, QrCode, Gift,
 } from "lucide-react";
 
 function isValidSolanaAddress(addr: string): boolean {
@@ -24,7 +25,7 @@ const clusterQuery = NETWORK === "mainnet" ? "" : `?cluster=${NETWORK}`;
 
 const TOKEN_LOGOS: Record<Token, string> = {
   SOL: "/tokens/sol.png", USDC: "/tokens/usdc.png", USDT: "/tokens/usdt.png",
-  BONK: "/tokens/bonk.png", JUP: "/tokens/jup.png", WIF: "/tokens/wif.png",
+  UMBRA: "/tokens/umbra.png", CASH: "/tokens/cash.png",
 };
 
 // ─── Token selector ───────────────────────────────────────────────────────────
@@ -146,10 +147,18 @@ function ModeSelector({ value, onChange }: ModeSelectorProps) {
       accent: "var(--vp-violet)",
       accentRgb: "107,124,255",
     },
+    {
+      id: "gift",
+      icon: <Gift size={18} />,
+      title: "Gift Card",
+      desc: "Send a private gift — recipient claims into their own wallet.",
+      accent: "#d97706",
+      accentRgb: "217,119,6",
+    },
   ];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
       {options.map((o) => {
         const active = value === o.id;
         return (
@@ -357,6 +366,26 @@ export default function CreatePage() {
   const { connected, wallet, account } = useWalletContext();
   useEffect(() => { preloadCreateAssets(); }, []);
 
+  // ── Stranded ephemeral recovery ───────────────────────────────────────────
+  const [stranded, setStranded] = useState<StrandedEphemeral[]>([]);
+  const [recoveringAddr, setRecoveringAddr] = useState<string | null>(null);
+  const [recoveryStatus, setRecoveryStatus] = useState("");
+  useEffect(() => { setStranded(getStrandedEphemerals()); }, []);
+
+  const handleRecover = async (entry: StrandedEphemeral) => {
+    setRecoveringAddr(entry.address);
+    setRecoveryStatus("Starting…");
+    try {
+      const sig = await recoverStrandedEphemeral(entry, setRecoveryStatus);
+      setRecoveryStatus(`Recovered! Solscan: https://solscan.io/tx/${sig}`);
+      setStranded(getStrandedEphemerals());
+    } catch (e) {
+      setRecoveryStatus(e instanceof Error ? e.message : "Recovery failed");
+    } finally {
+      setRecoveringAddr(null);
+    }
+  };
+
   const [transferType, setTransferType] = useState<TransferType>("link");
 
   // Link state
@@ -434,6 +463,8 @@ export default function CreatePage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setStep("input");
+      // Refresh stranded list — the ephemeral key was saved during the attempt
+      setStranded(getStrandedEphemerals());
     }
   };
 
@@ -482,6 +513,34 @@ export default function CreatePage() {
 
   return (
     <AppShell active="create">
+
+      {/* ── Stranded ephemeral recovery banner ── */}
+      {stranded.length > 0 && (
+        <div style={{ background: "rgba(245,158,11,0.10)", borderBottom: "0.5px solid rgba(245,158,11,0.30)", padding: "12px 24px" }}>
+          <div className="container" style={{ maxWidth: 560 }}>
+            {stranded.map((entry) => (
+              <div key={entry.address} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <AlertTriangle size={15} style={{ color: "#f59e0b", flexShrink: 0 }} />
+                <span style={{ fontSize: 13, color: "var(--ink-2)", flex: 1 }}>
+                  A previous link creation failed — <strong style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{entry.address.slice(0,8)}…</strong> still holds SOL.
+                </span>
+                {recoveringAddr === entry.address ? (
+                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{recoveryStatus}</span>
+                ) : (
+                  <button
+                    className="btn btn-glass btn-sm"
+                    style={{ fontSize: 12, color: "#f59e0b", borderColor: "rgba(245,158,11,0.35)" }}
+                    onClick={() => handleRecover(entry)}
+                  >
+                    Recover SOL →
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <section className="app-head">
         <div className="container" style={{ maxWidth: 600, textAlign: "center" }}>
           <span className="eyebrow" style={{ display: "inline-flex" }}>Send</span>
@@ -664,6 +723,20 @@ export default function CreatePage() {
                   </>
                 )}
               </>
+            )}
+
+            {/* ── GIFT CARD FLOW ── */}
+            {transferType === "gift" && (
+              <div className="card glass card-pad-lg reveal in" style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>🎁</div>
+                <p style={{ fontWeight: 600, fontSize: 18, letterSpacing: "-0.02em", marginBottom: 8 }}>Create a private gift card</p>
+                <p style={{ color: "var(--ink-3)", fontSize: 14, marginBottom: 24, maxWidth: 320, margin: "0 auto 24px" }}>
+                  Gift cards have denomination presets, a personal message, and a gift card visual at the claim page.
+                </p>
+                <a href="/gift" className="btn btn-primary" style={{ justifyContent: "center" }}>
+                  <Gift size={15} /> Open Gift Card creator →
+                </a>
+              </div>
             )}
 
             {/* ── CONFIDENTIAL FLOW ── */}

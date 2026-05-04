@@ -28,6 +28,11 @@ export function checkRateLimit(key: string, max: number): boolean {
   // Evict expired hits
   entry.hits = entry.hits.filter((t) => now - t < WINDOW_MS);
 
+  // After eviction, if the bucket is empty it means this IP went quiet for a full
+  // window — delete the key now so the Map doesn't grow unboundedly under
+  // rotating-proxy attacks where millions of IPs each contribute one stale entry.
+  if (entry.hits.length === 0) store.delete(key);
+
   if (entry.hits.length >= max) {
     store.set(key, entry);
     return false;

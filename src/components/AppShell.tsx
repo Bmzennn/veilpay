@@ -28,8 +28,8 @@ function AppNav({ active }: { active: string }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const items = [
     { id: "create",    label: "Send",      href: "/create" },
+    { id: "merchant",  label: "Merchant",  href: "/merchant" },
     { id: "dashboard", label: "Dashboard", href: "/dashboard" },
-    { id: "audit",     label: "Audit",     href: "/audit" },
     { id: "docs",      label: "Docs",      href: "/docs" },
   ];
 

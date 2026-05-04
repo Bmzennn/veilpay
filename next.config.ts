@@ -1,5 +1,13 @@
 import type { NextConfig } from "next";
 
+const isDev = process.env.NODE_ENV === "development";
+
+// In development, Next.js hot-reload (react-refresh) uses eval() for source maps.
+// 'unsafe-eval' is required in dev only; production bundles never use eval().
+const scriptSrc = isDev
+  ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
+  : "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'";
+
 const securityHeaders = [
   // Prevent clickjacking — critical for a financial app where iframing could trick users into signing txs
   { key: "X-Frame-Options", value: "DENY" },
@@ -17,9 +25,7 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      // wasm-unsafe-eval allows WebAssembly instantiation (required by snarkjs)
-      // without enabling arbitrary eval()/new Function() string-to-code execution.
-      "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+      scriptSrc,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob:",
@@ -36,9 +42,13 @@ const securityHeaders = [
         "https://*.solana.com",
         "wss://*.solana.com",
         "https://*.helius.xyz",
+        "wss://*.helius.xyz",
         "https://*.helius-rpc.com",
+        "wss://*.helius-rpc.com",
         "https://*.quicknode.com",
+        "wss://*.quicknode.com",
         "https://*.alchemy.com",
+        "wss://*.alchemy.com",
         "https://solscan.io",
       ].join(" "),
       "worker-src 'self' blob:",

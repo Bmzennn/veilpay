@@ -1,6 +1,6 @@
-export type Token = "SOL" | "USDC" | "USDT" | "BONK" | "JUP" | "WIF";
+export type Token = "SOL" | "USDC" | "USDT" | "UMBRA" | "CASH";
 export type PaymentMode = "general" | "locked";
-export type TransferType = "link" | "confidential";
+export type TransferType = "link" | "confidential" | "gift";
 
 export type LinkStep = "input" | "funding" | "registering" | "creating" | "done";
 export type ClaimStep = "scanning" | "preview" | "claiming" | "done";

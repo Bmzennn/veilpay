@@ -18,6 +18,8 @@ import {
   shortAddress,
 } from "@/lib/wallet";
 
+const LAST_WALLET_KEY = "vp-last-wallet";
+
 interface WalletContextValue {
   wallets: Wallet[];
   wallet: Wallet | null;
@@ -39,39 +41,49 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<WalletAccount | null>(null);
   const [connecting, setConnecting] = useState(false);
 
-  useEffect(() => {
-    // Seed the wallet list. We do a few passes:
-    //  1. Immediately after mount (handles wallets already registered)
-    //  2. After 300ms (catches late-injecting extensions like Phantom)
-    //  3. Subscribe to future register/unregister events
+  // ── Auto-reconnect: silently re-connect to last used wallet ──────────────
+  const tryAutoConnect = useCallback(async (available: Wallet[]) => {
+    if (account) return; // already connected
+    const lastName = typeof window !== "undefined"
+      ? localStorage.getItem(LAST_WALLET_KEY)
+      : null;
+    if (!lastName) return;
 
+    const last = available.find(w => w.name === lastName);
+    if (!last) return;
+
+    try {
+      const connectFeature = last.features["standard:connect"] as {
+        connect: (opts?: { silent?: boolean }) => Promise<{ accounts: readonly WalletAccount[] }>;
+      };
+      // silent:true — shows no popup; succeeds only if site was previously approved
+      const result = await connectFeature.connect({ silent: true });
+      if (result.accounts.length > 0) {
+        setWallet(last);
+        setAccount(result.accounts[0]);
+      }
+    } catch {
+      // silent connect not supported or approval revoked — user must reconnect manually
+      localStorage.removeItem(LAST_WALLET_KEY);
+    }
+  }, [account]);
+
+  useEffect(() => {
     const refresh = () => {
       const ws = getCompatibleWallets();
-      // If Wallet Standard found nothing, try the legacy Phantom injection.
-      if (ws.length === 0) {
-        const fallback = getPhantomFallback();
-        setWallets(fallback ? [fallback] : []);
-      } else {
-        setWallets(ws);
-      }
+      const list = ws.length > 0 ? ws : (getPhantomFallback() ? [getPhantomFallback()!] : []);
+      setWallets(list);
+      // Attempt auto-reconnect after the wallet list stabilises
+      tryAutoConnect(list);
     };
 
-    // Immediate pass
     refresh();
-
-    // Delayed pass — Phantom often injects 200-400ms after page load
     const t1 = setTimeout(refresh, 300);
     const t2 = setTimeout(refresh, 800);
-
-    // Subscribe to Wallet Standard events for future changes
     const unsub = subscribeWallets(refresh, refresh);
 
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      unsub();
-    };
-  }, []);
+    return () => { clearTimeout(t1); clearTimeout(t2); unsub(); };
+  }, [tryAutoConnect]);
 
   const connect = useCallback(async (w: Wallet) => {
     setConnecting(true);
@@ -80,6 +92,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       if (acc) {
         setWallet(w);
         setAccount(acc);
+        localStorage.setItem(LAST_WALLET_KEY, w.name);
       }
     } catch (e) {
       console.error("[WalletContext] connect failed:", e);
@@ -92,27 +105,21 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     if (wallet) await disconnectWallet(wallet);
     setWallet(null);
     setAccount(null);
+    localStorage.removeItem(LAST_WALLET_KEY);
   }, [wallet]);
 
-  const selectWallet = useCallback((w: Wallet) => {
-    setWallet(w);
-  }, []);
+  const selectWallet = useCallback((w: Wallet) => { setWallet(w); }, []);
 
   const address = account?.address ?? null;
 
   return (
     <WalletContext.Provider
       value={{
-        wallets,
-        wallet,
-        account,
-        connected: !!account,
-        connecting,
+        wallets, wallet, account,
+        connected: !!account, connecting,
         address,
         displayAddress: address ? shortAddress(address) : null,
-        connect,
-        disconnect,
-        selectWallet,
+        connect, disconnect, selectWallet,
       }}
     >
       {children}

@@ -7,12 +7,11 @@ import { ChevronDown, Check } from "lucide-react";
 import type { Token } from "@/types";
 
 const TOKEN_LOGO_URLS: Record<Token, string> = {
-  SOL:  "/tokens/sol.png",
-  USDC: "/tokens/usdc.png",
-  USDT: "/tokens/usdt.png",
-  BONK: "/tokens/bonk.png",
-  JUP:  "/tokens/jup.png",
-  WIF:  "/tokens/wif.png",
+  SOL:   "/tokens/sol.png",
+  USDC:  "/tokens/usdc.png",
+  USDT:  "/tokens/usdt.png",
+  UMBRA: "/tokens/umbra.png",
+  CASH:  "/tokens/cash.png",
 };
 
 
@@ -32,12 +31,11 @@ function TokenLogo({ symbol, size = 32 }: { symbol: Token; size?: number }) {
 type TokenMeta = { symbol: Token; name: string };
 
 const TOKENS: TokenMeta[] = [
-  { symbol: "SOL",  name: "Solana"     },
-  { symbol: "USDC", name: "USD Coin"   },
-  { symbol: "USDT", name: "Tether USD" },
-  { symbol: "BONK", name: "Bonk"       },
-  { symbol: "JUP",  name: "Jupiter"    },
-  { symbol: "WIF",  name: "dogwifhat"  },
+  { symbol: "SOL",   name: "Solana"     },
+  { symbol: "USDC",  name: "USD Coin"   },
+  { symbol: "USDT",  name: "Tether USD" },
+  { symbol: "UMBRA", name: "Umbra"      },
+  { symbol: "CASH",  name: "CASH"       },
 ];
 
 interface TokenSelectorProps {

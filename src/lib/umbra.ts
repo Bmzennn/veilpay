@@ -59,7 +59,7 @@ import type { Wallet, WalletAccount } from "@wallet-standard/core";
 import type { Address } from "@solana/kit";
 import bs58 from "bs58";
 
-import { Keypair, Connection, VersionedTransaction } from "@solana/web3.js";
+import { Keypair, Connection, LAMPORTS_PER_SOL, VersionedTransaction } from "@solana/web3.js";
 import {
   RPC_URL,
   RPC_WS_URL,
@@ -68,12 +68,105 @@ import {
   UMBRA_RELAYER_URL,
   TOKEN_CONFIG,
   LINK_EXPIRY_DAYS,
+  EPHEMERAL_SOL_BUFFER,
 } from "./constants";
 import { fundEphemeral } from "./solana";
 import type { Token, PaymentLinkMeta } from "@/types";
 
 // Derive U32 from the scanner function's parameter type (it is a branded bigint)
 export type U32 = Parameters<ClaimableUtxoScannerFunction>[0];
+
+// ─── Ephemeral rescue ────────────────────────────────────────────────────────
+// If link creation fails after funding (steps 2–4), the ephemeral private key
+// is saved here so the sender can recover the buffer on their next visit.
+
+const RESCUE_KEY = "vp-stranded-ephemerals";
+
+export interface StrandedEphemeral {
+  address: string;
+  privateKeyB58: string;
+  senderAddress: string;
+  fundedAt: number; // unix ms
+}
+
+function saveStrandedEphemeral(entry: StrandedEphemeral): void {
+  if (typeof window === "undefined") return;
+  try {
+    const existing: StrandedEphemeral[] = JSON.parse(sessionStorage.getItem(RESCUE_KEY) ?? "[]");
+    // Deduplicate by address
+    const updated = [...existing.filter(e => e.address !== entry.address), entry];
+    sessionStorage.setItem(RESCUE_KEY, JSON.stringify(updated));
+  } catch {}
+}
+
+function clearStrandedEphemeral(address: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const existing: StrandedEphemeral[] = JSON.parse(sessionStorage.getItem(RESCUE_KEY) ?? "[]");
+    sessionStorage.setItem(RESCUE_KEY, JSON.stringify(existing.filter(e => e.address !== address)));
+  } catch {}
+}
+
+export function getStrandedEphemerals(): StrandedEphemeral[] {
+  if (typeof window === "undefined") return [];
+  try { return JSON.parse(sessionStorage.getItem(RESCUE_KEY) ?? "[]"); } catch { return []; }
+}
+
+/** Sweep all recoverable SOL from a stranded ephemeral back to the sender's wallet. */
+export async function recoverStrandedEphemeral(
+  entry: StrandedEphemeral,
+  onStatus: (msg: string) => void
+): Promise<string> {
+  const b58 = (bs58 as { default?: typeof bs58 } & typeof bs58).default ?? bs58;
+  const privateKeyBytes = b58.decode(entry.privateKeyB58);
+  const ephemeralKeypair = Keypair.fromSeed(
+    privateKeyBytes.length === 32 ? privateKeyBytes : privateKeyBytes.slice(0, 32)
+  );
+  const connection = new Connection(RPC_URL, "confirmed");
+  const balance = await connection.getBalance(ephemeralKeypair.publicKey, "confirmed");
+
+  if (balance === 0) {
+    clearStrandedEphemeral(entry.address);
+    throw new Error("Nothing to recover — ephemeral account is already empty.");
+  }
+
+  onStatus(`Recovering ${(balance / 1e9).toFixed(6)} SOL…`);
+
+  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  const tx = new Transaction();
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = ephemeralKeypair.publicKey;
+
+  // Estimate fee
+  tx.add(SystemProgram.transfer({ fromPubkey: ephemeralKeypair.publicKey, toPubkey: new PublicKey(entry.senderAddress), lamports: 1000 }));
+  const feeCalc = await connection.getFeeForMessage(tx.compileMessage(), "confirmed");
+  tx.instructions = [];
+  const fee = BigInt(feeCalc.value ?? 5000);
+  const sweepAmount = BigInt(balance) - fee;
+
+  if (sweepAmount <= 0n) throw new Error("Balance too small to cover transaction fee.");
+
+  tx.add(SystemProgram.transfer({
+    fromPubkey: ephemeralKeypair.publicKey,
+    toPubkey: new PublicKey(entry.senderAddress),
+    lamports: sweepAmount,
+  }));
+  tx.sign(ephemeralKeypair);
+
+  const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+  onStatus("Confirming…");
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const status = await connection.getSignatureStatus(sig, { searchTransactionHistory: false });
+    const conf = status.value?.confirmationStatus;
+    if (conf === "confirmed" || conf === "finalized") {
+      clearStrandedEphemeral(entry.address);
+      return sig;
+    }
+    if (status.value?.err) throw new Error(`Recovery tx failed: ${JSON.stringify(status.value.err)}`);
+  }
+  throw new Error(`Recovery tx not confirmed after 60s — check Solscan: https://solscan.io/tx/${sig}`);
+}
 
 // ─── ZK asset provider ───────────────────────────────────────────────────────
 // The Umbra CDN omits CORS headers, so browser fetches are blocked.
@@ -210,8 +303,8 @@ export async function preloadCreateAssets() {
     const provider = getPersistentZkAssetProvider();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await Promise.all([
-      provider.getAssetUrls("userregistration" as any),
-      provider.getAssetUrls("receiverclaimableutxofrompublicbalance" as any)
+      provider.getAssetUrls("userRegistration" as any),
+      provider.getAssetUrls("createDepositWithPublicAmount" as any),
     ]);
     console.log("[zkCache] Proactive pre-load complete.");
   } catch (e) {
@@ -1025,6 +1118,22 @@ export async function createPaymentLink({
   );
 
   try {
+    // 0. Pre-flight: check sender has enough SOL for the full flow.
+    //    - EPHEMERAL_SOL_BUFFER (sent to ephemeral for registration)
+    //    - ~0.005 SOL for the proof buffer account (paid by sender wallet, returned after claim)
+    //    - ~0.001 SOL tx fees across all steps
+    //    Total minimum: buffer + 0.007 SOL safety margin
+    {
+      const connection = new Connection(RPC_URL, "confirmed");
+      const senderBalance = await connection.getBalance(new PublicKey(senderAccount.address), "confirmed");
+      const minRequired = Math.round((EPHEMERAL_SOL_BUFFER + 0.007) * LAMPORTS_PER_SOL);
+      if (senderBalance < minRequired) {
+        const have = (senderBalance / LAMPORTS_PER_SOL).toFixed(4);
+        const need = (minRequired / LAMPORTS_PER_SOL).toFixed(4);
+        throw new Error(`Insufficient SOL: wallet has ${have} SOL but needs at least ${need} SOL to create a link (buffer + protocol fees).`);
+      }
+    }
+
     // 1. Generate ephemeral keypair
     onStatusChange("Generating ephemeral keypair…");
     let ephemeralSigner: Awaited<ReturnType<typeof createEphemeralSigner>>;
@@ -1045,6 +1154,16 @@ export async function createPaymentLink({
       console.error("[createPaymentLink] step 2 fund error:", e);
       throw new Error(`[step 2 fund] ${e instanceof Error ? e.message : String(e)}`);
     }
+
+    // Persist the ephemeral key so the sender can recover the buffer if
+    // a later step fails (registration, UTXO creation, etc.)
+    const b58Lib = (bs58 as { default?: typeof bs58 } & typeof bs58).default ?? bs58;
+    saveStrandedEphemeral({
+      address: ephemeralSigner.address.toString(),
+      privateKeyB58: b58Lib.encode(ephemeralPrivateKey),
+      senderAddress: senderAccount.address,
+      fundedAt: Date.now(),
+    });
 
     // 3. Register ephemeral with Umbra
     onStatusChange("Registering privacy channel…");
@@ -1287,6 +1406,9 @@ export async function createPaymentLink({
         }),
       }).catch(() => {});
     }
+
+    // Link created successfully — clear the rescue entry
+    clearStrandedEphemeral(ephemeralSigner.address.toString());
 
     return { url, meta };
   } catch (err) {
@@ -1553,6 +1675,137 @@ export async function shieldFunds({
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(`Shield failed: ${msg}`);
   }
+}
+
+// ─── Merchant Pay ─────────────────────────────────────────────────────────────
+
+export interface MerchantPayArgs {
+  payerWallet: Wallet;
+  payerAccount: WalletAccount;
+  merchantAddress: string;
+  token: Token;
+  amountHuman: string;
+  onStatusChange: (msg: string) => void;
+}
+
+export interface MerchantPayResult {
+  createProofAccountSignature: string;
+  createUtxoSignature: string;
+}
+
+export async function merchantPay({
+  payerWallet, payerAccount, merchantAddress, token, amountHuman, onStatusChange,
+}: MerchantPayArgs): Promise<MerchantPayResult> {
+  const validationError = validateAmount(amountHuman, token);
+  if (validationError) throw new Error(validationError);
+
+  const tokenCfg = TOKEN_CONFIG[token];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const amountRaw = BigInt(Math.round(parseFloat(amountHuman) * 10 ** tokenCfg.decimals)) as any;
+
+  {
+    const connection = new Connection(RPC_URL, "confirmed");
+    const balance = await connection.getBalance(new PublicKey(payerAccount.address), "confirmed");
+    const minRequired = Math.round(0.012 * LAMPORTS_PER_SOL);
+    if (balance < minRequired) {
+      const have = (balance / LAMPORTS_PER_SOL).toFixed(4);
+      throw new Error(`Insufficient SOL: wallet has ${have} SOL but needs at least 0.012 SOL for transaction fees.`);
+    }
+  }
+
+  const commitmentKeys: CommitmentKeyMap = new Map();
+  const payerSigner = createBrowserSigner(payerWallet, payerAccount, commitmentKeys);
+
+  onStatusChange("Connecting to Umbra…");
+  let payerClient: Awaited<ReturnType<typeof makeClient>>;
+  try {
+    payerClient = await makeClient(payerSigner as Parameters<typeof makeClient>[0], { skipPreflight: true });
+  } catch (e) {
+    throw new Error(`[setup] ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  onStatusChange("Verifying account…");
+  try {
+    const querier = getUserAccountQuerierFunction({ client: payerClient });
+    const state = await querier(payerAccount.address as Address);
+    const needsReg = state.state !== "exists"
+      || !state.data.isUserCommitmentRegistered
+      || !state.data.isUserAccountX25519KeyRegistered;
+    if (needsReg) {
+      onStatusChange("Registering Umbra account (wallet prompts 2–4)…");
+      const regProver = getUserRegistrationProver(makeZkProverDeps());
+      const register = getUserRegistrationFunction({ client: payerClient }, {
+        zkProver: regProver,
+        keys: {
+          userAccountX25519KeypairDeriver: makeCapturingDeriver(getUserAccountX25519KeypairDeriver({ client: payerClient }), commitmentKeys),
+          masterViewingKeyEncryptingX25519KeypairDeriver: makeCapturingDeriver(getMasterViewingKeyX25519KeypairDeriver({ client: payerClient }), commitmentKeys),
+        },
+      });
+      await register({ confidential: true, anonymous: true });
+    }
+  } catch (e) {
+    throw new Error(`Account verification failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  onStatusChange("Computing ZK proof…");
+  const _deps = makeZkProverDeps();
+  const utxoProver = getCreateReceiverClaimableUtxoFromPublicBalanceProver({
+    assetProvider: _deps.assetProvider,
+    callbacks: {
+      ..._deps.callbacks,
+      onProofComputation: {
+        pre: _deps.callbacks.onProofComputation?.pre,
+        post: async () => { await _deps.callbacks.onProofComputation?.post?.(); onStatusChange("Broadcasting payment…"); },
+      },
+    },
+  });
+  const createUtxo = getPublicBalanceToReceiverClaimableUtxoCreatorFunction(
+    { client: payerClient },
+    { zkProver: utxoProver }
+  );
+
+  try {
+    const result = await createUtxo({
+      destinationAddress: merchantAddress as Address,
+      mint: tokenCfg.mint as Address,
+      amount: amountRaw,
+    });
+    return {
+      createProofAccountSignature: result.createProofAccountSignature.toString(),
+      createUtxoSignature: result.createUtxoSignature.toString(),
+    };
+  } catch (e) {
+    throw new Error(`Payment failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** Check whether a wallet is registered with Umbra (required to receive merchant payments). */
+export async function checkUmbraRegistration(wallet: Wallet, account: WalletAccount): Promise<boolean> {
+  try {
+    const commitmentKeys: CommitmentKeyMap = new Map();
+    const signer = createBrowserSigner(wallet, account, commitmentKeys);
+    const client = await makeClient(signer as Parameters<typeof makeClient>[0]);
+    const querier = getUserAccountQuerierFunction({ client });
+    const state = await querier(account.address as Address);
+    return state.state === "exists" && state.data.isUserCommitmentRegistered && state.data.isUserAccountX25519KeyRegistered;
+  } catch { return false; }
+}
+
+/** Register a wallet with Umbra so it can receive merchant payments. */
+export async function registerWithUmbra(wallet: Wallet, account: WalletAccount, onStatusChange: (msg: string) => void): Promise<void> {
+  const commitmentKeys: CommitmentKeyMap = new Map();
+  const signer = createBrowserSigner(wallet, account, commitmentKeys);
+  const client = await makeClient(signer as Parameters<typeof makeClient>[0], { skipPreflight: true });
+  onStatusChange("Registering with Umbra (wallet prompts 2–4)…");
+  const regProver = getUserRegistrationProver(makeZkProverDeps());
+  const register = getUserRegistrationFunction({ client }, {
+    zkProver: regProver,
+    keys: {
+      userAccountX25519KeypairDeriver: makeCapturingDeriver(getUserAccountX25519KeypairDeriver({ client }), commitmentKeys),
+      masterViewingKeyEncryptingX25519KeypairDeriver: makeCapturingDeriver(getMasterViewingKeyX25519KeypairDeriver({ client }), commitmentKeys),
+    },
+  });
+  await register({ confidential: true, anonymous: true });
 }
 
 /** Format a raw token amount to a human-readable string with no trailing zeros. */
@@ -1892,12 +2145,21 @@ export async function claimPaymentLink({
     // The SDK ignores destinationAddress and withdraws to the signer (ephemeral wallet).
     // We now sweep the ephemeral wallet's balance to the actual recipient.
     onStatusChange("Sweeping funds to your wallet…");
-    await sweepEphemeral(
-      ephemeralPrivateKey,
-      token,
-      recipientAddress,
-      originalAmountRaw
-    );
+    try {
+      await sweepEphemeral(
+        ephemeralPrivateKey,
+        token,
+        recipientAddress,
+        originalAmountRaw
+      );
+    } catch (e) {
+      // Sweep failure is non-fatal for token payments — the UTXO was already
+      // withdrawn successfully. Log the failure but let the claim complete.
+      // For SOL payments the sweep IS the delivery, so re-throw.
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[claimPaymentLink] sweep failed:", msg);
+      if (token === "SOL") throw new Error(`Sweep failed: ${msg}`);
+    }
 
     // Prefer the finalized callback signature; fall back to queue signature
     const signature =
@@ -2013,7 +2275,7 @@ import {
   createTransferInstruction,
   createCloseAccountInstruction,
 } from "@solana/spl-token";
-import { SystemProgram, Transaction, sendAndConfirmTransaction, PublicKey } from "@solana/web3.js";
+import { SystemProgram, Transaction, PublicKey } from "@solana/web3.js";
 
 /**
  * The Umbra withdrawal instruction requires `userSplAta` (the destination
@@ -2084,10 +2346,21 @@ async function ensureEphemeralAta(
 
   console.log("[ensureEphemeralAta] creating ATA:", ata.toString());
   const tx = new Transaction();
+  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = ownerPubkey;
   tx.add(createAssociatedTokenAccountIdempotentInstruction(
     ownerPubkey, ata, ownerPubkey, mintPubkey
   ));
-  await sendAndConfirmTransaction(connection, tx, [ephemeralKeypair], { skipPreflight: true });
+  tx.sign(ephemeralKeypair);
+  const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const status = await connection.getSignatureStatus(sig, { searchTransactionHistory: false });
+    const conf = status.value?.confirmationStatus;
+    if (conf === "confirmed" || conf === "finalized") break;
+    if (status.value?.err) throw new Error(`ATA creation failed: ${JSON.stringify(status.value.err)}`);
+  }
   console.log("[ensureEphemeralAta] created");
 }
 
@@ -2241,12 +2514,33 @@ async function sweepEphemeral(
     }
 
     if (tx.instructions.length > 0) {
-      await sendAndConfirmTransaction(connection, tx, [ephemeralKeypair], { skipPreflight: false });
+      tx.sign(ephemeralKeypair);
+      const sweepSig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+      console.log(`[sweep] sweep tx submitted: ${sweepSig}`);
+
+      // Poll for confirmation — no WebSocket dependency
+      let confirmed = false;
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const status = await connection.getSignatureStatus(sweepSig, { searchTransactionHistory: false });
+        const conf = status.value?.confirmationStatus;
+        if (conf === "confirmed" || conf === "finalized") {
+          console.log(`[sweep] ✅ sweep confirmed (${conf}) — sig: ${sweepSig}`);
+          confirmed = true;
+          break;
+        }
+        if (status.value?.err) {
+          throw new Error(`Sweep transaction failed on-chain: ${JSON.stringify(status.value.err)}`);
+        }
+      }
+      if (!confirmed) {
+        console.warn(`[sweep] sweep tx not confirmed after 60s — sig: ${sweepSig}`);
+      }
     }
   } catch (e) {
-    console.warn("Failed to sweep remaining ephemeral SOL:", e);
-    if (token === "SOL") {
-      throw new Error(`Failed to sweep SOL to your wallet: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[sweep] Failed to sweep remaining ephemeral balance:", msg);
+    // Surface the error regardless of token type so the caller knows the sweep failed
+    throw new Error(`Sweep failed: ${msg}`);
   }
 }

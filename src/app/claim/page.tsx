@@ -29,6 +29,13 @@ export default function ClaimPage() {
   const [linkId, setLinkId] = useState<string | null>(null);
   const [lockedTo, setLockedTo] = useState<string | null>(null);
   const [memo, setMemo] = useState<string | null>(null);
+
+  // Gift card mode — set when ?type=gift is in the URL
+  const [isGift, setIsGift] = useState(false);
+  const [giftFrom, setGiftFrom] = useState<string | null>(null);
+  const [giftTo, setGiftTo] = useState<string | null>(null);
+  const [giftUnwrapped, setGiftUnwrapped] = useState(false);
+
   const [step, setStep] = useState<ClaimStep>("scanning");
   const [statusMsg, setStatusMsg] = useState("Scanning pool…");
   const [amount, setAmount] = useState("—");
@@ -50,8 +57,17 @@ export default function ClaimPage() {
     const expMs = params.get("exp");
     if (expMs && Date.now() > Number(expMs)) { setError("This payment link has expired."); setStep("preview"); return; }
     setLinkId(params.get("lid"));
-    const to = params.get("to");
-    if (to) setLockedTo(to);
+
+    if (params.get("type") === "gift") {
+      // Gift cards: ?giftfrom / ?giftto are display names only, never wallet locks
+      setIsGift(true);
+      setGiftFrom(params.get("giftfrom") ?? params.get("from")); // legacy compat
+      setGiftTo(params.get("giftto") ?? null);
+    } else {
+      // Regular links: ?to is a wallet address lock
+      const to = params.get("to");
+      if (to) setLockedTo(to);
+    }
     const { claimSecret: secret, token: parsedToken, memo: parsedMemo } = parseClaimHash(raw);
     setClaimSecret(secret);
     setToken(parsedToken);
@@ -84,6 +100,7 @@ export default function ClaimPage() {
 
   const handleClaim = async () => {
     if (!claimSecret || !address || walletMismatch) return;
+    if (!wallet || !account) { setError("Wallet not connected"); return; }
     setError(null);
     setStep("claiming");
     try {
@@ -92,7 +109,7 @@ export default function ClaimPage() {
         recipientAddress: address,
         onStatusChange: setStatusMsg,
         lockedTo: lockedTo ?? undefined,
-        signMessage: lockedTo && wallet && account ? makeSignMessage(wallet, account) : undefined,
+        signMessage: makeSignMessage(wallet, account),
       });
       setTxSig(result.signature);
       setStep("done");
@@ -106,15 +123,90 @@ export default function ClaimPage() {
     <AppShell active="">
       <section className="app-head">
         <div className="container" style={{ maxWidth: 720, textAlign: "center" }}>
-          <span className="eyebrow" style={{ display: "inline-flex" }}>Claim a private payment</span>
+          <span className="eyebrow" style={{ display: "inline-flex" }}>
+            {isGift ? "🎁 Gift Card" : "Claim a private payment"}
+          </span>
           <h1 className="h2" style={{ textAlign: "center" }}>
-            Someone sent you funds <em>privately.</em>
+            {isGift ? "You've received a gift." : <>Someone sent you funds <em>privately.</em></>}
           </h1>
         </div>
       </section>
 
       <section className="app-section">
         <div className="container" style={{ maxWidth: 540 }}>
+
+          {/* ── Gift card envelope (shown before user unwraps) ── */}
+          {isGift && !giftUnwrapped && step !== "done" && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{
+                borderRadius: 24, overflow: "hidden",
+                background: "linear-gradient(135deg, #0a1428 0%, #0d1f3a 50%, #071020 100%)",
+                border: "0.5px solid rgba(0,179,255,.25)",
+                boxShadow: "0 20px 60px -12px rgba(0,0,0,.6), 0 0 0 1px rgba(0,179,255,.08)",
+                position: "relative", marginBottom: 12,
+              }}>
+                <div style={{ position: "absolute", top: -30, right: -30, width: 140, height: 140, borderRadius: "50%", background: "radial-gradient(circle, rgba(0,179,255,.12), transparent 70%)", pointerEvents: "none" }} />
+                <div style={{ position: "relative", padding: "28px 28px 24px", textAlign: "center" }}>
+                  <div style={{ fontSize: 52, marginBottom: 16, animation: "float 2.5s ease-in-out infinite" }}>🎁</div>
+                  {giftTo && (
+                    <p style={{ fontSize: 14, color: "rgba(255,255,255,.5)", marginBottom: 6 }}>
+                      For <span style={{ color: "rgba(255,255,255,.85)", fontWeight: 600 }}>{giftTo}</span>
+                    </p>
+                  )}
+                  {memo && (
+                    <p style={{ fontSize: 15, color: "rgba(255,255,255,.75)", fontStyle: "italic", lineHeight: 1.5, maxWidth: 320, margin: "0 auto 12px" }}>
+                      "{memo}"
+                    </p>
+                  )}
+                  {giftFrom && (
+                    <p style={{ fontSize: 12, color: "rgba(255,255,255,.35)", marginTop: 8 }}>— {giftFrom}</p>
+                  )}
+                </div>
+              </div>
+
+              {step !== "scanning" && (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setGiftUnwrapped(true)}
+                  style={{ width: "100%", justifyContent: "center", fontSize: 15, padding: "13px" }}
+                >
+                  🎁 Unwrap Gift
+                </button>
+              )}
+              {step === "scanning" && (
+                <p style={{ textAlign: "center", color: "var(--ink-4)", fontSize: 13 }}>
+                  Scanning shielded pool for your gift…
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ── Claimed gift success ── */}
+          {isGift && step === "done" && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{
+                borderRadius: 24, overflow: "hidden",
+                background: "linear-gradient(135deg, rgba(52,211,153,.12) 0%, #0a1428 60%)",
+                border: "0.5px solid rgba(52,211,153,.3)",
+                boxShadow: "0 20px 60px -12px rgba(0,0,0,.5)",
+                padding: "32px 28px", textAlign: "center",
+              }}>
+                <div style={{ fontSize: 52, marginBottom: 12 }}>🎊</div>
+                <p style={{ fontWeight: 700, fontSize: 26, letterSpacing: "-0.03em", marginBottom: 6, color: "#fff" }}>
+                  Gift claimed!
+                </p>
+                {memo && (
+                  <p style={{ fontSize: 14, color: "rgba(255,255,255,.6)", fontStyle: "italic", marginBottom: 4 }}>"{memo}"</p>
+                )}
+                {giftFrom && (
+                  <p style={{ fontSize: 12, color: "rgba(255,255,255,.35)" }}>— {giftFrom}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Show claim UI only after unwrapping (or not a gift) ── */}
+          {(!isGift || giftUnwrapped || step === "done") && (<>
 
           {/* ── Scanning ── */}
           {step === "scanning" && (
@@ -250,8 +342,15 @@ export default function ClaimPage() {
               </div>
             </div>
           )}
+
+          </>)}
+
         </div>
       </section>
+
+      <style>{`
+        @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+      `}</style>
     </AppShell>
   );
 }

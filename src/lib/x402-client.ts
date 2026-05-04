@@ -17,7 +17,7 @@ import bs58 from "bs58";
 
 /**
  * Custom transaction forwarder for AI agents that skips preflight simulation.
- * Essential for devnet reliability when sending multiple transactions in sequence.
+ * Skips preflight to avoid simulation failures when sending multi-tx sequences.
  */
 function makeAgentForwarder() {
   const connection = new Connection(RPC_URL, "confirmed");
@@ -91,6 +91,23 @@ if (typeof window === "undefined") {
   };
 }
 
+/**
+ * Known-good SHA-256 hashes for Umbra ZK circuit files.
+ *
+ * HOW TO POPULATE: run `node -e "require('./src/lib/x402-client')"` once.
+ * The first run will print the SHA-256 of each downloaded file. Copy those
+ * values here. On subsequent runs the agent will reject files that don't match.
+ *
+ * Keys are the last path segment of the CDN URL (filename only).
+ * Values are lowercase hex SHA-256 digests.
+ */
+const KNOWN_ZK_HASHES: Record<string, string> = {
+  // Populate after first trusted download — see comment above.
+  // Example:
+  //   "receiver_claimable_utxo_from_public_balance_final.zkey": "abc123...",
+  //   "receiver_claimable_utxo_from_public_balance.wasm":       "def456...",
+};
+
 function makeNodeZkAssetProvider() {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const fsSync   = require("fs");
@@ -120,6 +137,33 @@ function makeNodeZkAssetProvider() {
     });
   }
 
+  /** Compute SHA-256 of a file and verify it against KNOWN_ZK_HASHES. */
+  function verifyCircuitFile(filePath: string, cdnUrl: string): void {
+    const filename = cdnUrl.split("/").pop() ?? filePath;
+    const buf: Buffer = fsSync.readFileSync(filePath);
+    const actual = crypto.createHash("sha256").update(buf).digest("hex") as string;
+
+    const expected = KNOWN_ZK_HASHES[filename];
+    if (expected) {
+      if (actual !== expected) {
+        // Remove the corrupt/tampered file so it doesn't persist in cache
+        try { fsSync.unlinkSync(filePath); } catch {}
+        throw new Error(
+          `ZK circuit integrity check FAILED for ${filename}.\n` +
+          `  expected: ${expected}\n` +
+          `  got:      ${actual}\n` +
+          `The CDN file may have been tampered with. Refusing to proceed.`
+        );
+      }
+    } else {
+      // Hash not yet pinned — print it so the developer can add it to KNOWN_ZK_HASHES
+      process.stdout?.write?.(
+        `  [SECURITY] ZK hash not pinned for ${filename} — add to KNOWN_ZK_HASHES:\n` +
+        `    "${filename}": "${actual}",\n`
+      );
+    }
+  }
+
   let manifest: Record<string, unknown> | null = null;
 
   return {
@@ -129,7 +173,15 @@ function makeNodeZkAssetProvider() {
           headers: { "User-Agent": "Mozilla/5.0 (compatible; VeilPayAgent/1.0)" },
         });
         if (!res.ok) throw new Error(`ZK manifest fetch failed: ${res.status}`);
-        manifest = (await res.json()) as Record<string, unknown>;
+
+        const text = await res.text();
+        if (!text) throw new Error("ZK manifest is empty");
+
+        try {
+          manifest = JSON.parse(text) as Record<string, unknown>;
+        } catch (e) {
+          throw new Error(`Failed to parse ZK manifest: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
 
       const assets = (manifest as { assets: Record<string, unknown> }).assets;
@@ -156,11 +208,14 @@ function makeNodeZkAssetProvider() {
         await downloadFile(fullZkeyUrl, zkeyPath);
         process.stdout?.write?.("done\n");
       }
+      verifyCircuitFile(zkeyPath, fullZkeyUrl);
+
       if (!fsSync.existsSync(wasmPath)) {
         process.stdout?.write?.(`  Downloading ${type}.wasm… `);
         await downloadFile(fullWasmUrl, wasmPath);
         process.stdout?.write?.("done\n");
       }
+      verifyCircuitFile(wasmPath, fullWasmUrl);
 
       return { zkeyUrl: `file://${zkeyPath}`, wasmUrl: `file://${wasmPath}` };
     },
@@ -192,7 +247,17 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
   console.log(`[x402Client] 402 Payment Required — extracting invoice…`);
 
   // 2. Parse invoice
-  const responseBody = await response.json();
+  const responseText = await response.text();
+  if (!responseText) {
+    throw new Error(`Server returned 402 but with an empty body (expected an invoice).`);
+  }
+
+  let responseBody: any;
+  try {
+    responseBody = JSON.parse(responseText);
+  } catch (e) {
+    throw new Error(`Failed to parse x402 invoice JSON: ${e instanceof Error ? e.message : String(e)}`);
+  }
   const invoice = responseBody.invoice;
 
   if (!invoice?.amount || !invoice?.token || !invoice?.destination || !invoice?.invoiceId) {
@@ -281,7 +346,7 @@ export async function x402Fetch(url: string, options: X402FetchOptions): Promise
   console.log(`[x402Client] Retrying with proof of payment…`);
 
   const retryHeaders = new Headers(fetchOptions.headers);
-  retryHeaders.set("Authorization", `x402 ${proofTxSig}:${depositSig}:${invoice.invoiceId}`);
+  retryHeaders.set("X-402-Payment", `x402 ${proofTxSig}:${depositSig}:${invoice.invoiceId}`);
 
   response = await fetch(url, { ...fetchOptions, headers: retryHeaders });
 

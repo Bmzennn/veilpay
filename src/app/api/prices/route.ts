@@ -5,16 +5,15 @@
  * This route fetches server-side (no CORS restriction) and returns the
  * USD prices for supported tokens.
  *
- * GET /api/prices?tokens=SOL,USDC,BONK
+ * GET /api/prices?tokens=SOL,USDC,UMBRA,CASH
  */
 
 import { NextRequest, NextResponse } from "next/server";
 
 const COINGECKO_IDS: Record<string, string> = {
-  SOL:  "solana",
-  BONK: "bonk",
-  JUP:  "jupiter-exchange-solana",
-  WIF:  "dogwifcoin",
+  SOL:   "solana",
+  UMBRA: "umbra",
+  CASH:  "cash",
 };
 
 // Stablecoins: always $1 — no API call needed

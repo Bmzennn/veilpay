@@ -112,7 +112,7 @@ function X402Demo() {
       await new Promise((r) => setTimeout(r, 10000));
       setStatus("Verifying payment with API…");
       const authPayload = `x402 ${result.createProofAccountSignature}:${result.createUtxoSignature}:${invoice.invoiceId}`;
-      const finalRes = await fetch("/api/premium-data", { headers: { "Authorization": authPayload } });
+      const finalRes = await fetch("/api/premium-data", { headers: { "X-402-Payment": authPayload } });
       const finalData = await finalRes.json();
       if (finalData.success) { setPremiumData(finalData.data); setStatus("Payment verified. Access granted!"); }
       else throw new Error(finalData.error || "Verification failed");

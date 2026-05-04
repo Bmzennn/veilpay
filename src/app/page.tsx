@@ -266,34 +266,70 @@ export default function LandingPage() {
         {/* ── Hero ── */}
         <section className="hero">
           <div className="container">
-            <div className="hero-grid">
-              <div className="hero-copy reveal in">
-                <span className="badge" style={{ marginBottom: 28 }}>
-                  <span className="badge-dot" /> Built on Umbra Protocol · Solana
-                </span>
-                <h1 className="h1">
-                  Private payments,<br />
-                  <em>zero traces.</em>
-                </h1>
-                <p className="lead" style={{ marginTop: 24 }}>
-                  Send and receive crypto privately on Solana. Funds enter a shielded pool as
-                  encrypted commitments — and leave from a fresh, unlinkable address.
-                </p>
-                <div className="hero-cta">
-                  <a className="btn btn-primary" href="/create">
-                    Get started <ArrowRight size={16} />
-                  </a>
-                  <a className="btn btn-glass" href="/docs">Read the docs</a>
+            <div style={{ textAlign: "center", marginBottom: 48 }}>
+              <span className="badge" style={{ marginBottom: 20, display: "inline-flex" }}>
+                <span className="badge-dot" /> Built on Umbra Protocol · Solana Mainnet
+              </span>
+              <h1 className="h1">
+                Private payments,<br /><em>zero traces.</em>
+              </h1>
+              <p className="lead" style={{ marginTop: 20, maxWidth: 520, margin: "20px auto 0" }}>
+                Funds enter a shielded pool as encrypted commitments and leave from a fresh, unlinkable address.
+              </p>
+            </div>
+
+            {/* ── Two persona cards ── */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, maxWidth: 760, margin: "0 auto 32px" }}>
+              {/* Send card */}
+              <a href="/create" style={{ textDecoration: "none" }}>
+                <div className="glass reveal in" style={{
+                  padding: "32px 28px", borderRadius: 24,
+                  border: "0.5px solid rgba(0,179,255,.25)",
+                  background: "linear-gradient(135deg, rgba(0,179,255,.07) 0%, var(--glass-bg) 70%)",
+                  cursor: "pointer", transition: "border-color .2s, transform .2s",
+                  height: "100%",
+                }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(0,179,255,.12)", border: "0.5px solid rgba(0,179,255,.3)", display: "grid", placeItems: "center", marginBottom: 20 }}>
+                    <Shield size={22} style={{ color: "var(--vp-sky)" }} />
+                  </div>
+                  <h2 style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 10, color: "var(--ink)" }}>Send privately</h2>
+                  <p style={{ fontSize: 14, color: "var(--ink-3)", lineHeight: 1.55, marginBottom: 24 }}>
+                    Payment links, gift cards, direct confidential transfers — sender and recipient never linked on-chain.
+                  </p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: "var(--vp-sky)" }}>
+                    Get started <ArrowRight size={14} />
+                  </div>
                 </div>
-                <div className="hero-trust">
-                  <span className="badge"><Shield size={13} /> Groth16 ZK proofs</span>
-                  <span className="badge"><Key size={13} /> Non-custodial</span>
-                  <span className="badge"><EyeOff size={13} /> Arcium MPC</span>
+              </a>
+
+              {/* Accept card */}
+              <a href="/merchant" style={{ textDecoration: "none" }}>
+                <div className="glass reveal in" style={{
+                  padding: "32px 28px", borderRadius: 24,
+                  border: "0.5px solid rgba(107,124,255,.25)",
+                  background: "linear-gradient(135deg, rgba(107,124,255,.07) 0%, var(--glass-bg) 70%)",
+                  cursor: "pointer", transition: "border-color .2s, transform .2s",
+                  height: "100%",
+                }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(107,124,255,.12)", border: "0.5px solid rgba(107,124,255,.3)", display: "grid", placeItems: "center", marginBottom: 20 }}>
+                    <span style={{ fontSize: 20 }}>🏪</span>
+                  </div>
+                  <h2 style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 10, color: "var(--ink)" }}>Accept payments</h2>
+                  <p style={{ fontSize: 14, color: "var(--ink-3)", lineHeight: 1.55, marginBottom: 24 }}>
+                    Private Solana Pay — generate QR codes for checkout. Customers pay without revealing their wallet.
+                  </p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: "var(--vp-violet)" }}>
+                    Set up merchant <ArrowRight size={14} />
+                  </div>
                 </div>
-              </div>
-              <div className="hero-stage reveal in">
-                <ShieldedPoolHero />
-              </div>
+              </a>
+            </div>
+
+            {/* ── Secondary links ── */}
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              <a href="/dashboard" className="btn btn-glass btn-sm" style={{ fontSize: 12 }}>Dashboard</a>
+              <a href="/gift" className="btn btn-glass btn-sm" style={{ fontSize: 12 }}>🎁 Gift Cards</a>
+              <a href="/docs" className="btn btn-glass btn-sm" style={{ fontSize: 12 }}>Docs</a>
             </div>
           </div>
         </section>

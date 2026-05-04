@@ -4,7 +4,7 @@
  * Thin wrappers for operations not covered by the Umbra SDK:
  * - Funding the ephemeral account with SOL before registration
  * - Checking SOL/SPL balances
- * - Querying the Umbra relayer's supported mints (useful for devnet mint discovery)
+ * - Querying the Umbra relayer's supported mints
  */
 
 "use client";
@@ -155,11 +155,11 @@ export async function getPublicTokenBalance(
 
 /**
  * Fetch the list of mint addresses the Umbra relayer supports.
- * Useful for discovering the correct devnet USDC mint address.
+ * Useful for verifying which mints the relayer accepts on the current network.
  *
  * @example
  * const mints = await fetchRelayerSupportedMints();
- * console.log("Umbra devnet mints:", mints);
+ * console.log("Umbra supported mints:", mints);
  */
 export async function fetchRelayerSupportedMints(): Promise<string[]> {
   const relayer = getUmbraRelayer({ apiEndpoint: UMBRA_RELAYER_URL });

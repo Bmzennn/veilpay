@@ -101,7 +101,8 @@ const RELAYER = network === "mainnet"
     SOL:  "So11111111111111111111111111111111111111112",
     USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
-  };
+    UMBRA: { mint: "PRVT6TB7uss3FrUd2D9xs2zqDBsa3GbMJMwCQsgmeta", decimals: 6 }
+};
   const mint = TOKEN_MINTS[token] || TOKEN_MINTS.SOL;
   const querier = getEncryptedBalanceQuerierFunction({ client });
   const balMap = await querier([mint]);

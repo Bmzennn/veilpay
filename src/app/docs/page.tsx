@@ -121,8 +121,11 @@ const NAV = [
   ]},
   { group: "Features", items: [
     { id: "links",      label: "Private Payment Links" },
+    { id: "gift",       label: "Gift Cards" },
+    { id: "merchant",   label: "Private Solana Pay" },
     { id: "conf",       label: "Confidential Transfers" },
     { id: "shield",     label: "Shield & Unshield" },
+    { id: "dashboard",  label: "Dashboard" },
     { id: "x402",       label: "x402 Payments" },
   ]},
   { group: "SDK & Integrations", items: [
@@ -328,21 +331,23 @@ export default function DocsPage() {
           {/* ── Introduction ── */}
           <SH id="intro" tag="Get Started">Introduction</SH>
           <P><strong>VeilPay</strong> is a private payments application built on the <a href="https://umbraprivacy.com" target="_blank" rel="noopener noreferrer" className="dc-link">Umbra Protocol</a> on Solana. It lets anyone send and receive tokens with zero on-chain link between sender and recipient — using Groth16 ZK proofs and Arcium MPC encryption.</P>
-          <P>VeilPay exposes four primitives over a single shielded pool:</P>
+          <P>VeilPay exposes six primitives over a single shielded pool:</P>
           <UL items={[
             <><strong>Private Payment Links</strong> — shareable URLs that encode an ephemeral claim key. Both sender and recipient remain fully anonymous on-chain.</>,
+            <><strong>Gift Cards</strong> — private gift card links with denomination presets, a personal message, and a gift card visual at claim. Built on top of payment links.</>,
+            <><strong>Private Solana Pay</strong> — QR-code-based checkout for merchants. Customers pay via ZK proof; merchant receives without seeing the customer's wallet.</>,
             <><strong>Confidential Transfers</strong> — direct encrypted deposits to a known recipient&apos;s Umbra balance. The amount is hidden; addresses are known.</>,
             <><strong>Shield &amp; Unshield</strong> — move tokens between your own public wallet and your private encrypted balance at any time.</>,
-            <><strong>x402 Payments</strong> — HTTP 402 pay-per-request flows using Umbra stealth deposits. The server receives payment without learning who paid.</>,
+            <><strong>x402 Payments</strong> — HTTP 402 pay-per-request flows using Umbra stealth deposits. Invoiced in USDC; server receives without learning who paid.</>,
           ]} />
-          <Note>Set <IC c="NEXT_PUBLIC_NETWORK=mainnet" /> to target mainnet. Default is devnet. On devnet, only SOL transfers work natively.</Note>
+          <Note>VeilPay runs on <strong>mainnet</strong> by default. All five tokens — SOL, USDC, USDT, UMBRA, and CASH — are supported by the Umbra mainnet relayer.</Note>
 
           {/* ── Quickstart ── */}
           <SH id="quickstart" tag="Get Started">Quickstart</SH>
           <P>Get VeilPay running locally in under five minutes.</P>
 
           <H3>Prerequisites</H3>
-          <UL items={["Node.js 18+ and npm", "A Phantom or Solflare wallet browser extension", "A Supabase project (free tier works)", "A Solana RPC endpoint (Helius, QuickNode, or the public devnet)"]} />
+          <UL items={["Node.js 18+ and npm", "A Phantom or Solflare wallet browser extension", "A Supabase project (free tier works)", "A mainnet Solana RPC endpoint (Helius or QuickNode recommended; public endpoint works for testing)"]} />
 
           <H3>Clone and install</H3>
           <Code lang="bash" code={`git clone https://github.com/your-org/veilpay
@@ -353,12 +358,12 @@ npm install`} />
           <P>Copy the example env file and fill in your values:</P>
           <Code lang="bash" code={`cp .env.example .env.local`} />
           <Code lang="bash" code={`# .env.local
-NEXT_PUBLIC_NETWORK=devnet
-NEXT_PUBLIC_RPC_URL=https://api.devnet.solana.com
-NEXT_PUBLIC_RPC_WS_URL=wss://api.devnet.solana.com
+NEXT_PUBLIC_NETWORK=mainnet
+NEXT_PUBLIC_RPC_URL=https://your-rpc.helius.xyz/your-api-key
+NEXT_PUBLIC_RPC_WS_URL=wss://your-rpc.helius.xyz/your-api-key
 
 # Umbra services (auto-selected by NEXT_PUBLIC_NETWORK if omitted)
-NEXT_PUBLIC_UMBRA_RELAYER_URL=https://relayer.api-devnet.umbraprivacy.com
+NEXT_PUBLIC_UMBRA_RELAYER_URL=https://relayer.api.umbraprivacy.com
 NEXT_PUBLIC_UMBRA_INDEXER_URL=/api/indexer-proxy   # proxied — do not change
 
 # Supabase
@@ -393,19 +398,17 @@ create policy "Public read" on links for select using (true);`} />
 
           {/* ── Supported Tokens ── */}
           <SH id="tokens" tag="Get Started">Supported Tokens</SH>
-          <P>VeilPay supports SOL and five SPL tokens. All SPL tokens use their mainnet mint addresses — devnet SOL-only.</P>
+          <P>VeilPay supports SOL and five SPL tokens on mainnet.</P>
           <Table
             head={["Symbol", "Name", "Decimals", "Mainnet Mint", "Status"]}
             rows={[
-              ["SOL",  "Solana",      "9", "So1111…1112", <Badge label="Devnet + Mainnet" color="green" />],
-              ["USDC", "USD Coin",    "6", "EPjFWd…Dt1v", <Badge label="Mainnet only" color="amber" />],
-              ["USDT", "Tether USD",  "6", "Es9vMF…NYB",  <Badge label="Mainnet only" color="amber" />],
-              ["BONK", "Bonk",        "5", "DezXAZ…B263", <Badge label="Mainnet only" color="amber" />],
-              ["JUP",  "Jupiter",     "6", "JUPyiw…vCN",  <Badge label="Mainnet only" color="amber" />],
-              ["WIF",  "dogwifhat",   "6", "EKpQGS…cjm",  <Badge label="Mainnet only" color="amber" />],
+              ["SOL",   "Solana",     "9", "So1111…1112", <Badge label="Live" color="green" />],
+              ["USDC",  "USD Coin",   "6", "EPjFWd…Dt1v", <Badge label="Live" color="green" />],
+              ["USDT",  "Tether USD", "6", "Es9vMF…NYB",  <Badge label="Live" color="green" />],
+              ["UMBRA", "Umbra",      "6", "PRVT6T…meta", <Badge label="Live" color="green" />],
+              ["CASH",  "CASH",       "6", "CASHx9…CASH", <Badge label="Live" color="green" />],
             ]}
           />
-          <Warn>Sending SPL tokens on devnet will always fail with "insufficient balance" — devnet nodes do not mirror mainnet token accounts. Test SPL flows on mainnet or a mainnet fork.</Warn>
 
           {/* ── How Umbra Works ── */}
           <SH id="how-umbra" tag="Concepts">How Umbra Works</SH>
@@ -533,6 +536,58 @@ create policy "Public read" on links for select using (true);`} />
           <H3>Link expiry</H3>
           <P>Links expire after <IC c="NEXT_PUBLIC_LINK_EXPIRY_DAYS" /> days (default 7). The expiry is encoded in the URL query string (<IC c="?exp=<ms>" />) and checked client-side before any network call. Expired links show a clear error state.</P>
 
+          {/* ── Gift Cards ── */}
+          <SH id="gift" tag="Features">Gift Cards</SH>
+          <P>Private gift cards are payment links with a dedicated creation UI and a gift card presentation at the claim page. The underlying ZK mechanism is identical to private payment links — the gift card layer is purely UX.</P>
+
+          <H3>Creating a gift card</H3>
+          <P>Navigate to <IC c="/gift" /> (or select the Gift Card tab on the Send page). Choose a denomination preset ($1 · $5 · $10 · $25 · $50 · $100 in USDC, or any amount in any supported token), add an optional <em>From</em> name, <em>To</em> name, and message. The message is encoded in the URL hash memo field and never touches the server.</P>
+
+          <H3>Claim experience</H3>
+          <P>When a recipient opens a gift card link (<IC c="?type=gift" /> in the URL) the claim page shows a sealed gift card with the message before any wallet interaction. Clicking <strong>Unwrap Gift</strong> triggers the standard ZK scan + claim flow. On success the card animates to a delivered state showing the received amount.</P>
+
+          <H3>URL structure</H3>
+          <Code lang="text" code={`/claim?type=gift&giftfrom=Alice&giftto=Bob&lid=<uuid>&exp=<ms>#<secret>:<TOKEN>:<message>`} />
+          <Note><IC c="?giftfrom" /> and <IC c="?giftto" /> are display names only — they are never treated as wallet addresses. <IC c="?to=" /> (wallet lock) and <IC c="?giftto=" /> are deliberately different params.</Note>
+
+          {/* ── Private Solana Pay (Merchant) ── */}
+          <SH id="merchant" tag="Features">Private Solana Pay</SH>
+          <P>Private Solana Pay is a QR-code checkout flow for merchants. The customer scans a QR, opens a browser-based VeilPay checkout page, connects their wallet, and pays via a shielded Umbra UTXO addressed to the merchant. Neither party&apos;s address appears linked on-chain.</P>
+
+          <H3>Why not native Solana Pay wallet deep-links?</H3>
+          <P>The standard Solana Pay Transaction Request format requires a wallet to POST and receive a pre-built transaction in ~2 seconds. Umbra&apos;s ZK proof takes 15–30 seconds and runs client-side. The QR therefore links to a VeilPay web checkout page (<IC c="/pay/[id]" />) rather than a <IC c="solana:" /> URI.</P>
+
+          <H3>Merchant setup flow</H3>
+          <Steps items={[
+            ["Register",   <>Navigate to <IC c="/merchant" /> and connect the wallet you want to receive into. First-time merchants must complete a one-time Umbra registration (2–4 wallet signatures).</>],
+            ["Generate QR", "Enter an amount, token, and optional label. Click Generate QR. A unique payment request is stored in Supabase and a QR is rendered on screen."],
+            ["Customer pays", <>Customer scans QR → opens <IC c="/pay/[id]" /> → connects wallet → clicks Pay Privately → ZK proof runs → UTXO created for merchant.</>],
+            ["Receive funds", "The merchant page polls every 3 seconds. On confirmation it shows ✅. Funds land in the merchant's Umbra encrypted balance."],
+            ["Withdraw",   <>Dashboard → Claim pending → funds move into encrypted balance → Withdraw to move to public wallet.</>],
+          ]} />
+
+          <H3>Payment request API</H3>
+          <Table
+            head={["Method", "Path", "Auth", "Description"]}
+            rows={[
+              ["POST",  "/api/merchant-pay",            "None",           "Create a payment request"],
+              ["GET",   "/api/merchant-pay?id=<uuid>",  "None (public)",  "Fetch request status"],
+              ["GET",   "/api/merchant-pay?merchant=<addr>", "None",      "List merchant's requests"],
+              ["PATCH", "/api/merchant-pay?id=<uuid>",  "deposit_sig",    "Mark as paid"],
+            ]}
+          />
+
+          <H3>Privacy properties</H3>
+          <Table
+            head={["Property", "Result"]}
+            rows={[
+              ["Customer wallet",    "Not in QR, not linked on-chain to the merchant"],
+              ["Merchant wallet",    "Not in QR — only their Umbra commitment is referenced"],
+              ["Payment amount",     "Confidential inside the shielded pool"],
+              ["Transaction graph",  "Customer → Umbra Pool ← Merchant (no direct link)"],
+            ]}
+          />
+
           {/* ── Confidential Transfers ── */}
           <SH id="conf" tag="Features">Confidential Transfers</SH>
           <P>Confidential transfers move tokens from your public wallet directly into a known recipient&apos;s Umbra encrypted balance. The amount is hidden on-chain via Arcium MPC. The transaction records your address and the recipient&apos;s PDA — not their wallet address — so the amount is private but the relationship is visible.</P>
@@ -580,6 +635,34 @@ create policy "Public read" on links for select using (true);`} />
             <><strong>Withdraw</strong> — opens a modal to enter an amount, moves encrypted → public.</>,
           ]} />
 
+          {/* ── Dashboard ── */}
+          <SH id="dashboard" tag="Features">Dashboard</SH>
+          <P>The Dashboard (<IC c="/dashboard" />) is your account hub. It shows one balance state at a time — encrypted or public — and lets you switch between them with an animated flip card.</P>
+
+          <H3>Balance states</H3>
+          <P>Two tabs sit above the flip card. Clicking the inactive tab triggers a 3D Y-axis card flip with a cipher scramble effect at the midpoint:</P>
+          <UL items={[
+            <><strong>Encrypted Balance</strong> — funds inside the Umbra shielded pool. Tap any token row to open the Withdraw modal (encrypted → public wallet).</>,
+            <><strong>Public Balance</strong> — your regular on-chain wallet balance. Tap any token row to open the Shield modal (public wallet → encrypted pool).</>,
+          ]} />
+
+          <H3>Actions</H3>
+          <Table
+            head={["Action", "Available on", "Description"]}
+            rows={[
+              ["Withdraw",       "Encrypted face", "Move tokens from encrypted balance to your public wallet"],
+              ["Claim pending",  "Encrypted face", "Claim receiver-claimable UTXOs (from payment links or merchant payments) into your encrypted balance"],
+              ["Shield funds",   "Public face",    "Move tokens from your public wallet into your encrypted balance"],
+              ["Send",           "Public face",    "Navigate to the Send page to create a payment link"],
+            ]}
+          />
+
+          <H3>Link Audit tab</H3>
+          <P>The Dashboard has a second tab — <strong>Link Audit</strong> — where you can paste a claim secret to check payment status (pending / claimed / delivered). This is a receipt checker, not a compliance viewing key: it reveals the ephemeral address and amount but not sender or recipient identities.</P>
+
+          <H3>Wallet auto-connect</H3>
+          <P>VeilPay stores the last connected wallet name in <IC c="localStorage" /> and silently re-connects on page load using the Wallet Standard <IC c="{'{ silent: true }'}" /> connect option. Phantom (and most Wallet Standard wallets) will reconnect without a popup if the site was previously approved.</P>
+
           {/* ── x402 ── */}
           <SH id="x402" tag="Features">x402 Payments</SH>
           <P>The <a href="https://x402.org" target="_blank" rel="noopener noreferrer" className="dc-link">x402 protocol</a> extends HTTP with a <IC c="402 Payment Required" /> response carrying machine-readable payment instructions. VeilPay implements x402 using Umbra stealth deposits — so the payment is metered <em>and</em> private.</P>
@@ -595,14 +678,17 @@ create policy "Public read" on links for select using (true);`} />
           ]} />
 
           <H3>Invoice response format</H3>
+          <P>VeilPay&apos;s built-in premium endpoint invoices <strong>0.20 USDC</strong>. The invoice includes token metadata so the paying agent knows exactly which mint and decimal precision to use:</P>
           <Code lang="json" code={`HTTP/1.1 402 Payment Required
 Content-Type: application/json
 
 {
   "error": "Payment Required",
   "invoice": {
-    "amount": 0.1,
-    "token": "SOL",
+    "amount": 0.2,
+    "token": "USDC",
+    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "decimals": 6,
     "destination": "<server_solana_address>",
     "invoiceId": "<32_byte_hex>"
   }
@@ -637,7 +723,7 @@ const x402 = createX402({
 });
 
 export const GET = x402.nextjs(
-  { amount: 0.1, token: "SOL" },
+  { amount: 0.2, token: "USDC" },
   async (req) => Response.json({ data: "premium content" })
 );`} />
 
@@ -649,7 +735,7 @@ const x402 = createX402({ network: "mainnet", connection, serverPrivateKeyBase58
 const app = express();
 
 app.get("/premium",
-  x402.express({ amount: 0.1, token: "SOL" }),
+  x402.express({ amount: 0.2, token: "USDC" }),
   (req, res) => res.json({ data: "premium content" })
 );`} />
 
@@ -705,11 +791,10 @@ const x402 = createX402({ …, replayStore: new RedisReplayStore(redis) });`} />
 
           <H3>Agent setup</H3>
           <Code lang="bash" code={`node scripts/wallet.cjs create    # generate wallet → ~/.veilpay/wallet.json
-node scripts/wallet.cjs airdrop   # request devnet SOL
-node scripts/wallet.cjs balance`} />
+node scripts/wallet.cjs balance   # check mainnet SOL balance`} />
 
           <H3>Create a payment link</H3>
-          <Code lang="bash" code={`node scripts/create-link.cjs --amount 1.5 --token SOL --network devnet`} />
+          <Code lang="bash" code={`node scripts/create-link.cjs --amount 1.5 --token SOL --network mainnet`} />
           <Code lang="text" code={`[1/4] Generating ephemeral keypair…
 [2/4] Funding ephemeral…
 [3/4] Registering privacy channels (ZK proofs)…
