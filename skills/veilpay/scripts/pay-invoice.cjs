@@ -57,7 +57,7 @@ const invoiceArg = args.find((a) => !a.startsWith("--"));
 const get        = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : null; };
 const has        = (f) => args.includes(f);
 
-const network    = get("--network") || process.env.VEILPAY_NETWORK || "mainnet";
+const network    = get("--network") || process.env.VEILPAY_NETWORK || "mainnet"; // mainnet is the production default
 const walletPath = get("--wallet") || process.env.VEILPAY_WALLET_PATH
   || path.join(os.homedir(), ".veilpay", "wallet.json");
 const noWait     = has("--no-wait");
@@ -91,11 +91,13 @@ function savePayment(invoiceId, authValue) {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const TOKEN_DECIMALS = { SOL: 9, USDC: 6, USDT: 6 };
+const TOKEN_DECIMALS = { SOL: 9, USDC: 6, USDT: 6, UMBRA: 6, CASH: 6 };
 const TOKEN_MINTS    = {
-  SOL:  "So11111111111111111111111111111111111111112",
-  USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-  USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+  SOL:   "So11111111111111111111111111111111111111112",
+  USDC:  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  USDT:  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+  UMBRA: "PRVT6TB7uss3FrUd2D9xs2zqDBsa3GbMJMwCQsgmeta",
+  CASH:  "CASHx9KJUStyftLFWGvEVf59SGeG9sh5FfcnZMVPCASH",
 };
 
 const RPC = network === "mainnet"
@@ -285,10 +287,17 @@ function makeAgentForwarder(connection) {
   const connection = new Connection(RPC, "confirmed");
   const balance = await connection.getBalance(keypair.publicKey, "confirmed");
   const balanceSol = balance / LAMPORTS_PER_SOL;
-  const minRequired = invoice.amount + 0.02; 
-  
-  if (balanceSol < minRequired) {
-    console.error(`\n❌ Insufficient SOL. Agent has ${balanceSol.toFixed(3)} SOL but needs at least ${minRequired.toFixed(3)} SOL.`);
+  // SOL needed: proof buffer rent + registration fees + tx fees (~0.027 SOL)
+  // Token invoices (USDC etc.) need SOL for gas, not for the token amount itself
+  const solNeeded = invoice.token === "SOL"
+    ? invoice.amount + 0.027
+    : 0.027;
+
+  if (balanceSol < solNeeded) {
+    console.error(`\n❌ Insufficient SOL for gas. Agent has ${balanceSol.toFixed(4)} SOL but needs at least ${solNeeded.toFixed(4)} SOL to pay for ZK proof and transaction fees.`);
+    if (invoice.token !== "SOL") {
+      console.error(`   The ${invoice.token} amount (${invoice.amount}) will be deducted from your ${invoice.token} token balance.`);
+    }
     process.exit(1);
   }
 
