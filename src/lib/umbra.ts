@@ -1152,20 +1152,22 @@ export async function createPaymentLink({
   );
 
   try {
-    // 0. Pre-flight: check sender has enough SOL for the full flow.
-    //    - EPHEMERAL_SOL_BUFFER (sent to ephemeral for registration)
-    //    - ~0.005 SOL for the proof buffer account (paid by sender wallet, returned after claim)
-    //    - ~0.001 SOL tx fees across all steps
-    //    Total minimum: buffer + 0.007 SOL safety margin
-    {
+    // 0. Pre-flight: soft SOL balance check. Only blocks if balance is
+    //    definitively positive but too low — skips silently when RPC returns 0
+    //    (public mainnet-beta nodes rate-limit getBalance and return 0 on failure).
+    //    Genuine zero-balance wallets are caught by the Solana runtime anyway.
+    try {
       const connection = new Connection(RPC_URL, "confirmed");
       const senderBalance = await connection.getBalance(new PublicKey(senderAccount.address), "confirmed");
       const minRequired = Math.round((EPHEMERAL_SOL_BUFFER + 0.007) * LAMPORTS_PER_SOL);
-      if (senderBalance < minRequired) {
+      if (senderBalance > 0 && senderBalance < minRequired) {
         const have = (senderBalance / LAMPORTS_PER_SOL).toFixed(4);
         const need = (minRequired / LAMPORTS_PER_SOL).toFixed(4);
         throw new Error(`Insufficient SOL: wallet has ${have} SOL but needs at least ${need} SOL to create a link (buffer + protocol fees).`);
       }
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("Insufficient SOL")) throw e;
+      console.warn("[createPaymentLink] pre-flight balance check skipped:", e);
     }
 
     // 1. Generate ephemeral keypair
