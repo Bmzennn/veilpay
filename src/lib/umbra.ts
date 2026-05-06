@@ -449,7 +449,6 @@ export function makeSkipPreflightForwarder() {
   async function sendAndConfirm(tx: SdkSignedTx): Promise<string> {
     const wire = encodeTransactionToWire(tx.messageBytes, tx.signatures);
 
-    // Diagnostic: log wire stats before sending
     const sigCount = Object.keys(tx.signatures).length;
     console.log(
       "[sendAndConfirm] wire stats — sigSlots:", sigCount,
@@ -458,16 +457,22 @@ export function makeSkipPreflightForwarder() {
       "msgFirstByte:", tx.messageBytes[0]?.toString(16)
     );
 
-    // Send once to get a signature, then rebroadcast every RESUBMIT_MS while polling.
-    // Solana validators can drop transactions under load — resubmitting keeps it alive.
-    async function trySend(): Promise<string> {
+    // Whether a resubmit attempt detected a confirmed-expired blockhash.
+    let blockhashExpiredSignal = false;
+
+    async function trySend(opts: { skipPreflight: boolean } = { skipPreflight: true }): Promise<string> {
       try {
-        return await conn.sendRawTransaction(wire, { skipPreflight: true });
+        return await conn.sendRawTransaction(wire, opts);
       } catch (e) {
         const raw = e instanceof Error ? e.message : String(e);
-        // "already been processed" means a prior attempt confirmed — not an error.
         if (raw.includes("already been processed")) return "";
-        console.error("[skipPreflightForwarder] sendRawTransaction error:", e);
+        // "Blockhash not found" means the transaction's blockhash has expired.
+        // Signal the polling loop so it can bail immediately.
+        if (raw.toLowerCase().includes("blockhash not found") || raw.toLowerCase().includes("blockhash")) {
+          blockhashExpiredSignal = true;
+          return "";
+        }
+        console.error("[sendAndConfirm] sendRawTransaction error:", e);
         const brief = raw.split(/[:\n]/)[0]?.trim() ?? "RPC send failed";
         throw new Error(`Transaction send failed: ${brief.slice(0, 80)}`);
       }
@@ -482,17 +487,30 @@ export function makeSkipPreflightForwarder() {
       `\n  Explorer: https://explorer.solana.com/tx/${sig}${clusterQuery}`
     );
 
-    // Solana blockhashes expire after ~150 slots (~60s). Giving up at 55s
-    // lets callers retry with a fresh SDK call (new tx, new blockhash)
-    // instead of endlessly resubmitting a tx whose blockhash already expired.
+    // Blockhashes expire after ~150 slots (~60s). We cap at 55s.
+    // If the tx never lands (null on every poll) past the first two resubmit cycles,
+    // the blockhash is almost certainly expired — bail early with a clear message.
     const MAX_WAIT_MS = 55_000;
-    const POLL_MS = 1_000; // Tightened from 2s to 1s
-    const RESUBMIT_MS = 8_000; // Tightened from 10s to 8s
+    const POLL_MS = 1_000;
+    const RESUBMIT_MS = 7_000;
+    // After this many consecutive null polls following the first resubmission,
+    // declare blockhash expiry rather than burning through the full timeout.
+    const EXPIRY_NULL_THRESHOLD = 12; // ~12s of null after first resubmit ≈ ~19s total
     const deadline = Date.now() + MAX_WAIT_MS;
     let lastResubmit = Date.now();
+    let resubmitCount = 0;
+    let consecutiveNullAfterFirstResubmit = 0;
     let pollCount = 0;
 
     while (Date.now() < deadline) {
+      // Check if a resubmit detected blockhash expiry
+      if (blockhashExpiredSignal) {
+        throw new Error(
+          "Transaction blockhash expired — the wallet prompts took too long. " +
+          "Please try again and approve each Phantom prompt within a few seconds."
+        );
+      }
+
       const result = await conn.getSignatureStatus(sig, { searchTransactionHistory: false });
       const status = result.value;
       pollCount++;
@@ -504,30 +522,46 @@ export function makeSkipPreflightForwarder() {
         );
         if (status.err) {
           const errStr = JSON.stringify(status.err);
-          console.error("[skipPreflightForwarder] on-chain error:", status.err, "sig:", sig);
+          console.error("[sendAndConfirm] on-chain error:", status.err, "sig:", sig);
           throw new Error(`Transaction failed on-chain: ${errStr.slice(0, 80)}`);
         }
-        if (
-          status.confirmationStatus === "confirmed" ||
-          status.confirmationStatus === "finalized"
-        ) {
+        if (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized") {
           console.log("[sendAndConfirm] confirmed after", pollCount, "polls");
           return sig;
         }
-      } else if (pollCount <= 5 || pollCount % 10 === 0) {
-        console.log("[sendAndConfirm] poll", pollCount, "→ null (not yet seen by cluster)");
+        // Reset expiry counter — tx is visible, just not confirmed yet
+        consecutiveNullAfterFirstResubmit = 0;
+      } else {
+        if (pollCount <= 5 || pollCount % 10 === 0) {
+          console.log("[sendAndConfirm] poll", pollCount, "→ null (not yet seen by cluster)");
+        }
+        if (resubmitCount >= 1) {
+          consecutiveNullAfterFirstResubmit++;
+          if (consecutiveNullAfterFirstResubmit >= EXPIRY_NULL_THRESHOLD) {
+            console.warn(
+              "[sendAndConfirm] null for", consecutiveNullAfterFirstResubmit,
+              "polls after first resubmit — blockhash likely expired, bailing early"
+            );
+            throw new Error(
+              "Transaction blockhash expired — the wallet prompts took too long. " +
+              "Please try again and approve each Phantom prompt within a few seconds."
+            );
+          }
+        }
       }
 
-      // Rebroadcast if the tx hasn't landed yet and enough time has passed.
       if (Date.now() - lastResubmit >= RESUBMIT_MS) {
         lastResubmit = Date.now();
-        console.log("[sendAndConfirm] resubmitting (poll", pollCount, ")");
-        trySend().catch(() => { /* ignore resubmit errors — keep polling */ });
+        resubmitCount++;
+        console.log("[sendAndConfirm] resubmitting (poll", pollCount, ", attempt", resubmitCount, ")");
+        // Use preflight on resubmits so a "Blockhash not found" error is surfaced immediately.
+        trySend({ skipPreflight: false }).catch(() => { /* signal handled via blockhashExpiredSignal */ });
       }
+
       await new Promise((r) => setTimeout(r, POLL_MS));
     }
 
-    // Final check with history search — catches the "confirmed but evicted from recent cache" case
+    // Final history check — catches tx that confirmed but was evicted from the recent cache.
     const historyCheck = await conn.getSignatureStatus(sig, { searchTransactionHistory: true });
     if (historyCheck.value && !historyCheck.value.err) {
       console.log("[sendAndConfirm] found in history after timeout — treating as confirmed");

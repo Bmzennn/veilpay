@@ -5,10 +5,13 @@ import { createPortal } from "react-dom";
 import { AppShell } from "@/components/AppShell";
 import { ConnectWalletButton } from "@/components/WalletModal";
 import { useWalletContext } from "@/components/WalletContext";
-import { createPaymentLink, preloadCreateAssets } from "@/lib/umbra";
+import {
+  createPaymentLink, preloadCreateAssets,
+  getStrandedEphemerals, recoverStrandedEphemeral, type StrandedEphemeral,
+} from "@/lib/umbra";
 import { TOKEN_CONFIG, NETWORK } from "@/lib/constants";
 import type { Token } from "@/types";
-import { Gift, ChevronDown, Copy, Check, ExternalLink, QrCode } from "lucide-react";
+import { ChevronDown, Copy, Check, ExternalLink, QrCode, AlertTriangle, Download } from "lucide-react";
 
 type GiftStep = "input" | "creating" | "done";
 
@@ -20,7 +23,22 @@ const TOKEN_LOGOS: Record<Token, string> = {
 const USDC_PRESETS = [1, 5, 10, 25, 50, 100];
 const clusterQuery = NETWORK === "mainnet" ? "" : `?cluster=${NETWORK}`;
 
-// ─── Token picker (reused portal pattern) ─────────────────────────────────────
+// ─── Custom VeilPay gift card icon ────────────────────────────────────────────
+
+function VPGiftCardIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="4.5" width="15" height="10" rx="1.8" />
+      <line x1="1.5" y1="8" x2="16.5" y2="8" />
+      <path d="M13.5 2.5V1M13.5 2.5L15 2.5M13.5 2.5V4M13.5 2.5L12 2.5" strokeWidth="1.2" />
+      <line x1="4" y1="11" x2="7.5" y2="11" />
+      <line x1="4" y1="13" x2="10" y2="13" />
+    </svg>
+  );
+}
+
+// ─── Token picker (portal pattern) ───────────────────────────────────────────
+
 function TokenPicker({ value, onChange }: { value: Token; onChange: (t: Token) => void }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, right: 0 });
@@ -86,14 +104,234 @@ function TokenPicker({ value, onChange }: { value: Token; onChange: (t: Token) =
   );
 }
 
+// ─── Canvas-based gift card generator ────────────────────────────────────────
+
+interface GiftCardParams {
+  amount: number;
+  token: Token;
+  fromName: string;
+  toName: string;
+  qrDataUrl: string;
+}
+
+async function loadImage(src: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+async function downloadGiftCardFront(params: GiftCardParams) {
+  const W = 1012, H = 638;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d")!;
+
+  // Clip to card shape
+  roundRect(ctx, 0, 0, W, H, 44);
+  ctx.clip();
+
+  // Background gradient
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, "#0a1428");
+  bg.addColorStop(0.5, "#0d1f3a");
+  bg.addColorStop(1, "#071020");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Sky orb (top-left)
+  const orb1 = ctx.createRadialGradient(-60, -60, 0, -60, -60, 440);
+  orb1.addColorStop(0, "rgba(0,179,255,0.50)");
+  orb1.addColorStop(1, "rgba(0,179,255,0)");
+  ctx.fillStyle = orb1;
+  ctx.fillRect(0, 0, W, H);
+
+  // Violet orb (bottom-right)
+  const orb2 = ctx.createRadialGradient(W + 140, H + 120, 0, W + 140, H + 120, 520);
+  orb2.addColorStop(0, "rgba(107,124,255,0.40)");
+  orb2.addColorStop(1, "rgba(107,124,255,0)");
+  ctx.fillStyle = orb2;
+  ctx.fillRect(0, 0, W, H);
+
+  // Logo centered
+  const logo = await loadImage("/logo-nobg.png");
+  if (logo) {
+    const logoW = 320;
+    const logoH = (logo.naturalHeight / logo.naturalWidth) * logoW;
+    // Glow under logo
+    const logoGlow = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, 200);
+    logoGlow.addColorStop(0, "rgba(0,179,255,0.18)");
+    logoGlow.addColorStop(1, "rgba(0,179,255,0)");
+    ctx.fillStyle = logoGlow;
+    ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(logo, (W - logoW) / 2, (H - logoH) / 2, logoW, logoH);
+  }
+
+  // Amount — top right
+  const amtStr = params.amount % 1 === 0 ? String(params.amount) : params.amount.toFixed(2);
+  ctx.font = "bold 72px 'Geist', system-ui, sans-serif";
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "right";
+  ctx.fillText(amtStr, W - 70, 110);
+  ctx.font = "500 32px 'Geist', system-ui, sans-serif";
+  ctx.fillStyle = "rgba(255,255,255,0.50)";
+  ctx.fillText(params.token, W - 70, 154);
+
+  // Bottom label (spaced-out monospace style)
+  ctx.font = "500 16px 'Geist Mono', 'Geist', monospace";
+  ctx.fillStyle = "rgba(255,255,255,0.28)";
+  ctx.textAlign = "center";
+  ctx.fillText("P R I V A T E   P A Y M E N T   / /   Z E R O   T R A C E S", W / 2, H - 48);
+
+  // Download
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "veilpay-gift-front.png"; a.click();
+    URL.revokeObjectURL(url);
+  }, "image/png");
+}
+
+async function downloadGiftCardBack(params: GiftCardParams) {
+  const W = 1012, H = 638;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d")!;
+
+  roundRect(ctx, 0, 0, W, H, 44);
+  ctx.clip();
+
+  // White background
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, W, H);
+
+  const PL = 72;
+
+  // Title
+  ctx.fillStyle = "#000000";
+  ctx.font = "bold 44px 'Geist', system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText("Claim your gift", PL, 130);
+
+  // Instructions
+  ctx.fillStyle = "#444444";
+  ctx.font = "400 22px 'Geist', system-ui, sans-serif";
+  ctx.fillText("1.  Open your camera or QR scanner.", PL, 190);
+  ctx.fillText("2.  Scan the QR code on the right.", PL, 228);
+  ctx.fillText("3.  Connect your wallet and confirm.", PL, 266);
+
+  // From / To
+  const fieldY = 360;
+  ctx.fillStyle = "#aaaaaa";
+  ctx.font = "700 13px 'Geist', system-ui, sans-serif";
+  ctx.fillText("FROM", PL, fieldY - 6);
+  ctx.fillText("TO", PL + 260, fieldY - 6);
+
+  ctx.fillStyle = "#000000";
+  ctx.font = "400 20px 'Geist', system-ui, sans-serif";
+  ctx.fillText(params.fromName || "—", PL, fieldY + 28);
+  ctx.fillText(params.toName || "—", PL + 260, fieldY + 28);
+
+  ctx.strokeStyle = "#eeeeee";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(PL, fieldY + 42); ctx.lineTo(PL + 220, fieldY + 42);
+  ctx.moveTo(PL + 260, fieldY + 42); ctx.lineTo(PL + 480, fieldY + 42);
+  ctx.stroke();
+
+  // QR code (right side — black box)
+  const QR_SIZE = 270;
+  const QR_X = W - QR_SIZE - PL - 20;
+  const QR_Y = (H - QR_SIZE) / 2 - 30;
+
+  roundRect(ctx, QR_X - 20, QR_Y - 20, QR_SIZE + 40, QR_SIZE + 40, 24);
+  ctx.fillStyle = "#000000";
+  ctx.fill();
+
+  const qrImg = await loadImage(params.qrDataUrl);
+  if (qrImg) {
+    ctx.drawImage(qrImg, QR_X, QR_Y, QR_SIZE, QR_SIZE);
+  }
+
+  // "Scan to claim" label
+  ctx.fillStyle = "#888888";
+  ctx.font = "700 14px 'Geist Mono', 'Geist', monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("SCAN TO CLAIM", QR_X + QR_SIZE / 2, QR_Y + QR_SIZE + 50);
+
+  // Footer divider
+  const footerY = H - 38;
+  ctx.strokeStyle = "#eeeeee";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(PL, footerY - 22); ctx.lineTo(W - PL, footerY - 22);
+  ctx.stroke();
+
+  ctx.fillStyle = "#888888";
+  ctx.font = "400 13px 'Geist', system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText("POWERED BY UMBRA ZK-SHIELDED POOL  //  SOLANA MAINNET", PL, footerY);
+
+  ctx.fillStyle = "#000000";
+  ctx.font = "bold 22px 'Geist', system-ui, sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText("VEILPAY.XYZ", W - PL, footerY);
+
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "veilpay-gift-back.png"; a.click();
+    URL.revokeObjectURL(url);
+  }, "image/png");
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function GiftPage() {
   const { connected, wallet, account } = useWalletContext();
 
+  // Stranded ephemeral recovery
+  const [stranded, setStranded] = useState<StrandedEphemeral[]>([]);
+  const [recoveringAddr, setRecoveringAddr] = useState<string | null>(null);
+  const [recoveryStatus, setRecoveryStatus] = useState("");
+  useEffect(() => { setStranded(getStrandedEphemerals()); }, []);
+
+  const handleRecover = async (entry: StrandedEphemeral) => {
+    setRecoveringAddr(entry.address);
+    setRecoveryStatus("Starting…");
+    try {
+      const sig = await recoverStrandedEphemeral(entry, setRecoveryStatus);
+      setRecoveryStatus(`Recovered! Solscan: https://solscan.io/tx/${sig}`);
+      setStranded(getStrandedEphemerals());
+    } catch (e) {
+      setRecoveryStatus(e instanceof Error ? e.message : "Recovery failed");
+    } finally {
+      setRecoveringAddr(null);
+    }
+  };
+
   const [step, setStep] = useState<GiftStep>("input");
   const [token, setToken] = useState<Token>("USDC");
-  const [preset, setPreset] = useState<number | null>(10); // selected preset
+  const [preset, setPreset] = useState<number | null>(10);
   const [customAmount, setCustomAmount] = useState("");
   const [fromName, setFromName] = useState("");
   const [toName, setToName] = useState("");
@@ -104,25 +342,19 @@ export default function GiftPage() {
   const [resultTx, setResultTx] = useState("");
   const [copied, setCopied] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState("");
+  const [downloadingFront, setDownloadingFront] = useState(false);
+  const [downloadingBack, setDownloadingBack] = useState(false);
 
   useEffect(() => { preloadCreateAssets(); }, []);
 
-  // Effective amount: preset takes priority unless user typed a custom value
   const effectiveAmount = customAmount
     ? customAmount
     : preset !== null
     ? String(preset)
     : "";
 
-  const handlePreset = (p: number) => {
-    setPreset(p);
-    setCustomAmount("");
-  };
-
-  const handleCustomChange = (v: string) => {
-    setCustomAmount(v);
-    setPreset(null);
-  };
+  const handlePreset = (p: number) => { setPreset(p); setCustomAmount(""); };
+  const handleCustomChange = (v: string) => { setCustomAmount(v); setPreset(null); };
 
   const handleCreate = async () => {
     if (!wallet || !account || !effectiveAmount || parseFloat(effectiveAmount) <= 0) return;
@@ -141,22 +373,17 @@ export default function GiftPage() {
         onStatusChange: setStatusMsg,
       });
 
-      // Inject gift params into the query string
       const base = window.location.origin;
       const urlObj = new URL(url.startsWith("http") ? url : base + url);
       urlObj.searchParams.set("type", "gift");
-      // Use giftfrom/giftto — avoids collision with ?to= which the claim page
-      // treats as a wallet address lock on regular (non-gift) payment links.
       if (fromName.trim()) urlObj.searchParams.set("giftfrom", fromName.trim());
       if (toName.trim()) urlObj.searchParams.set("giftto", toName.trim());
-      const giftUrl = urlObj.pathname + urlObj.search + urlObj.hash;
-      const fullGiftUrl = base + giftUrl;
+      const fullGiftUrl = base + urlObj.pathname + urlObj.search + urlObj.hash;
 
-      // Store deposit tx for Solscan link
       const txMatch = url.match(/lid=([^&]+)/);
       setResultTx(txMatch?.[1] ?? "");
 
-      // Generate QR
+      // Generate QR (dark navy on sky-blue, on-brand)
       const QRCode = (await import("qrcode")).default;
       const qr = await QRCode.toDataURL(fullGiftUrl, {
         width: 280, margin: 2, color: { dark: "#0a1428", light: "#ffffff" },
@@ -165,9 +392,12 @@ export default function GiftPage() {
       setResultUrl(fullGiftUrl);
       setQrDataUrl(qr);
       setStep("done");
+      // Refresh stranded list on success (clear any previously saved from this wallet)
+      setStranded(getStrandedEphemerals());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
       setStep("input");
+      setStranded(getStrandedEphemerals());
     }
   };
 
@@ -177,15 +407,61 @@ export default function GiftPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleDownloadFront = async () => {
+    setDownloadingFront(true);
+    try {
+      await downloadGiftCardFront({ amount: amountNum, token, fromName, toName, qrDataUrl });
+    } finally {
+      setDownloadingFront(false);
+    }
+  };
+
+  const handleDownloadBack = async () => {
+    setDownloadingBack(true);
+    try {
+      await downloadGiftCardBack({ amount: amountNum, token, fromName, toName, qrDataUrl });
+    } finally {
+      setDownloadingBack(false);
+    }
+  };
+
   const amountNum = parseFloat(effectiveAmount || "0");
   const canCreate = connected && amountNum > 0;
 
   return (
     <AppShell active="gift">
+
+      {/* ── Stranded ephemeral recovery banner ── */}
+      {stranded.length > 0 && (
+        <div style={{ background: "rgba(245,158,11,0.10)", borderBottom: "0.5px solid rgba(245,158,11,0.30)", padding: "12px 24px" }}>
+          <div className="container" style={{ maxWidth: 560 }}>
+            {stranded.map((entry) => (
+              <div key={entry.address} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <AlertTriangle size={15} style={{ color: "#f59e0b", flexShrink: 0 }} />
+                <span style={{ fontSize: 13, color: "var(--ink-2)", flex: 1 }}>
+                  A previous gift card creation failed — <strong style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{entry.address.slice(0,8)}…</strong> still holds SOL.
+                </span>
+                {recoveringAddr === entry.address ? (
+                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{recoveryStatus}</span>
+                ) : (
+                  <button
+                    className="btn btn-glass btn-sm"
+                    style={{ fontSize: 12, color: "#f59e0b", borderColor: "rgba(245,158,11,0.35)" }}
+                    onClick={() => handleRecover(entry)}
+                  >
+                    Recover SOL →
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <section className="app-head">
         <div className="container" style={{ maxWidth: 560, textAlign: "center" }}>
           <span className="eyebrow" style={{ display: "inline-flex", gap: 8 }}>
-            <Gift size={13} /> Private Gift Card
+            <VPGiftCardIcon size={13} /> Private Gift Card
           </span>
           <h1 className="h2" style={{ textAlign: "center" }}>Send a gift, <em>privately.</em></h1>
           <p className="lead" style={{ textAlign: "center", margin: "0 auto" }}>
@@ -208,7 +484,6 @@ export default function GiftPage() {
                   <TokenPicker value={token} onChange={(t) => { setToken(t); setPreset(null); setCustomAmount(""); }} />
                 </div>
 
-                {/* Denomination presets — only for USDC */}
                 {token === "USDC" && (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 14 }}>
                     {USDC_PRESETS.map(p => (
@@ -230,7 +505,6 @@ export default function GiftPage() {
                   </div>
                 )}
 
-                {/* Custom amount */}
                 <div style={{ position: "relative" }}>
                   <input
                     type="number"
@@ -243,8 +517,7 @@ export default function GiftPage() {
                       border: customAmount ? "0.5px solid rgba(0,179,255,.4)" : "0.5px solid var(--glass-border)",
                       borderRadius: 12, padding: "11px 60px 11px 14px",
                       fontSize: 16, fontWeight: 500, color: "var(--ink)",
-                      outline: "none", fontFamily: "var(--font-sans)",
-                      boxSizing: "border-box",
+                      outline: "none", fontFamily: "var(--font-sans)", boxSizing: "border-box",
                     }}
                   />
                   <span style={{
@@ -310,7 +583,6 @@ export default function GiftPage() {
                 <p style={{ color: "#ef4444", fontSize: 13, padding: "0 4px" }}>{error}</p>
               )}
 
-              {/* CTA */}
               {!connected ? (
                 <div className="card glass card-pad-lg reveal in" style={{ textAlign: "center" }}>
                   <p style={{ color: "var(--ink-3)", fontSize: 14, marginBottom: 16 }}>Connect your wallet to send a gift card.</p>
@@ -323,7 +595,7 @@ export default function GiftPage() {
                   disabled={!canCreate}
                   style={{ width: "100%", justifyContent: "center", fontSize: 15, padding: "14px" }}
                 >
-                  <Gift size={16} />
+                  <VPGiftCardIcon size={16} />
                   {amountNum > 0
                     ? `Create ${amountNum} ${token} Gift Card`
                     : "Create Gift Card"}
@@ -335,8 +607,9 @@ export default function GiftPage() {
           {/* ── Creating ── */}
           {step === "creating" && (
             <div className="card glass card-pad-lg reveal in" style={{ textAlign: "center" }}>
-              {/* Animated gift icon */}
-              <div style={{ fontSize: 48, marginBottom: 16, animation: "float 2s ease-in-out infinite" }}>🎁</div>
+              <div style={{ width: 56, height: 56, borderRadius: 16, background: "rgba(217,119,6,.12)", border: "0.5px solid rgba(217,119,6,.3)", display: "grid", placeItems: "center", margin: "0 auto 18px", color: "#d97706", animation: "float 2s ease-in-out infinite" }}>
+                <VPGiftCardIcon size={26} />
+              </div>
               <p style={{ fontWeight: 600, fontSize: 18, letterSpacing: "-0.02em", marginBottom: 8 }}>
                 Creating gift card…
               </p>
@@ -361,7 +634,6 @@ export default function GiftPage() {
                 boxShadow: "0 20px 60px -12px rgba(0,0,0,.6), 0 0 0 1px rgba(0,179,255,.1)",
                 position: "relative",
               }}>
-                {/* Decorative blobs */}
                 <div style={{ position: "absolute", top: -40, right: -40, width: 160, height: 160, borderRadius: "50%", background: "radial-gradient(circle, rgba(0,179,255,.15), transparent 70%)", pointerEvents: "none" }} />
                 <div style={{ position: "absolute", bottom: -30, left: -30, width: 120, height: 120, borderRadius: "50%", background: "radial-gradient(circle, rgba(107,124,255,.12), transparent 70%)", pointerEvents: "none" }} />
 
@@ -379,7 +651,7 @@ export default function GiftPage() {
                         </p>
                       </div>
                     </div>
-                    <span style={{ fontSize: 32 }}>🎁</span>
+                    <div style={{ color: "rgba(0,179,255,.6)" }}><VPGiftCardIcon size={28} /></div>
                   </div>
 
                   {(toName || fromName || message) && (
@@ -392,7 +664,7 @@ export default function GiftPage() {
                       )}
                       {message && (
                         <p style={{ fontSize: 13, color: "rgba(255,255,255,.6)", fontStyle: "italic", lineHeight: 1.4 }}>
-                          "{message}"
+                          &ldquo;{message}&rdquo;
                         </p>
                       )}
                       {fromName && (
@@ -405,14 +677,41 @@ export default function GiftPage() {
                 </div>
               </div>
 
-              {/* Actions card */}
+              {/* Download card */}
               <div className="card glass card-pad-lg reveal in">
-                <p style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Share this gift card</p>
-                <p style={{ color: "var(--ink-3)", fontSize: 13, marginBottom: 20 }}>
-                  Send the link to the recipient. They claim it into their own wallet — no address required.
+                <p style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Download gift card</p>
+                <p style={{ color: "var(--ink-3)", fontSize: 13, marginBottom: 16 }}>
+                  Save as PNG to print or send digitally. Front is the branded card; back has the QR code to claim.
+                </p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn btn-glass"
+                    onClick={handleDownloadFront}
+                    disabled={downloadingFront}
+                    style={{ flex: 1, justifyContent: "center", fontSize: 13 }}
+                  >
+                    <Download size={13} />
+                    {downloadingFront ? "Generating…" : "Front"}
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleDownloadBack}
+                    disabled={downloadingBack || !qrDataUrl}
+                    style={{ flex: 1, justifyContent: "center", fontSize: 13 }}
+                  >
+                    <QrCode size={13} />
+                    {downloadingBack ? "Generating…" : "Back (with QR)"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Share card */}
+              <div className="card glass card-pad-lg reveal in">
+                <p style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Or share the link</p>
+                <p style={{ color: "var(--ink-3)", fontSize: 13, marginBottom: 16 }}>
+                  Send directly — recipient scans or taps to claim into their own wallet.
                 </p>
 
-                {/* Link */}
                 <div style={{
                   display: "flex", alignItems: "center", gap: 8,
                   background: "var(--glass-bg)", border: "0.5px solid var(--glass-border)",
@@ -430,7 +729,7 @@ export default function GiftPage() {
                   </button>
                 </div>
 
-                {/* QR */}
+                {/* QR preview */}
                 {qrDataUrl && (
                   <div style={{ textAlign: "center", marginBottom: 16 }}>
                     <div style={{
@@ -439,7 +738,7 @@ export default function GiftPage() {
                       boxShadow: "0 4px 20px rgba(0,0,0,.25)",
                     }}>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={qrDataUrl} alt="Gift card QR" style={{ width: 200, height: 200, display: "block" }} />
+                      <img src={qrDataUrl} alt="Gift card QR" style={{ width: 180, height: 180, display: "block" }} />
                     </div>
                     <p style={{ fontSize: 11, color: "var(--ink-4)", marginTop: 8 }}>
                       <QrCode size={10} style={{ display: "inline", verticalAlign: "middle", marginRight: 4 }} />

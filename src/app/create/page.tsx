@@ -13,9 +13,43 @@ import {
 import { TOKEN_CONFIG, NETWORK } from "@/lib/constants";
 import type { Token, LinkStep, PaymentLinkMeta, PaymentMode, TransferType, ConfidentialStep } from "@/types";
 import {
-  Shield, Lock, Globe, UserCheck, Send, ArrowRight, Check, Copy,
-  AlertTriangle, ExternalLink, Eye, EyeOff, ChevronDown, Plus, Timer, QrCode, Gift,
+  Lock, Globe, UserCheck, Send, ArrowRight, Check, Copy,
+  AlertTriangle, ExternalLink, Eye, EyeOff, ChevronDown, Plus, Timer, QrCode, Shield,
 } from "lucide-react";
+
+// ─── Custom VeilPay mode icons ────────────────────────────────────────────────
+
+function VPPrivateLinkIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="4.5" cy="9" r="3" />
+      <circle cx="13.5" cy="9" r="3" />
+      <line x1="7.5" y1="9" x2="10.5" y2="9" />
+      <rect x="7.5" y="7.5" width="3" height="3" rx="0.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function VPDirectSendIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 2.5L14.5 5V8.5c0 3-2 5-5.5 6.5C3 14 1 12 1 8.5V5L9 2.5z" />
+      <path d="M6.5 9.5L8.8 7.2l2.3 2.3M8.8 7.2v5.2" />
+    </svg>
+  );
+}
+
+function VPGiftCardIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="4.5" width="15" height="10" rx="1.8" />
+      <line x1="1.5" y1="8" x2="16.5" y2="8" />
+      <path d="M13.5 2.5V1M13.5 2.5L15 2.5M13.5 2.5V4M13.5 2.5L12 2.5" strokeWidth="1.2" />
+      <line x1="4" y1="11" x2="7.5" y2="11" />
+      <line x1="4" y1="13" x2="10" y2="13" />
+    </svg>
+  );
+}
 
 function isValidSolanaAddress(addr: string): boolean {
   try { new PublicKey(addr); return true; } catch { return false; }
@@ -133,7 +167,7 @@ function ModeSelector({ value, onChange }: ModeSelectorProps) {
   }[] = [
     {
       id: "link",
-      icon: <Globe size={18} />,
+      icon: <VPPrivateLinkIcon size={18} />,
       title: "Private Link",
       desc: "Anyone with the link can claim to a fresh wallet. Sender stays anonymous.",
       accent: "var(--vp-sky-deep)",
@@ -141,7 +175,7 @@ function ModeSelector({ value, onChange }: ModeSelectorProps) {
     },
     {
       id: "confidential",
-      icon: <Shield size={18} />,
+      icon: <VPDirectSendIcon size={18} />,
       title: "Direct Send",
       desc: "Send straight to a VeilPay address. Amount is hidden on-chain.",
       accent: "var(--vp-violet)",
@@ -149,7 +183,7 @@ function ModeSelector({ value, onChange }: ModeSelectorProps) {
     },
     {
       id: "gift",
-      icon: <Gift size={18} />,
+      icon: <VPGiftCardIcon size={18} />,
       title: "Gift Card",
       desc: "Send a private gift — recipient claims into their own wallet.",
       accent: "#d97706",
@@ -728,13 +762,15 @@ export default function CreatePage() {
             {/* ── GIFT CARD FLOW ── */}
             {transferType === "gift" && (
               <div className="card glass card-pad-lg reveal in" style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 48, marginBottom: 12 }}>🎁</div>
+                <div style={{ width: 60, height: 60, borderRadius: 18, background: "rgba(217,119,6,.12)", border: "0.5px solid rgba(217,119,6,.3)", display: "grid", placeItems: "center", margin: "0 auto 16px", color: "#d97706" }}>
+                  <VPGiftCardIcon size={26} />
+                </div>
                 <p style={{ fontWeight: 600, fontSize: 18, letterSpacing: "-0.02em", marginBottom: 8 }}>Create a private gift card</p>
                 <p style={{ color: "var(--ink-3)", fontSize: 14, marginBottom: 24, maxWidth: 320, margin: "0 auto 24px" }}>
-                  Gift cards have denomination presets, a personal message, and a gift card visual at the claim page.
+                  Gift cards have denomination presets, a personal message, and a downloadable card visual.
                 </p>
                 <a href="/gift" className="btn btn-primary" style={{ justifyContent: "center" }}>
-                  <Gift size={15} /> Open Gift Card creator →
+                  <VPGiftCardIcon size={15} /> Open Gift Card creator →
                 </a>
               </div>
             )}

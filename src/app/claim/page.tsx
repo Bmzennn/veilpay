@@ -10,6 +10,29 @@ import type { Wallet, WalletAccount } from "@wallet-standard/core";
 import type { ClaimStep, Token } from "@/types";
 import { Shield, AlertTriangle, UserCheck, Check, ExternalLink, ArrowRight, MessageSquare } from "lucide-react";
 
+// ─── Custom VeilPay icons ─────────────────────────────────────────────────────
+
+function VPGiftCardIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="4.5" width="15" height="10" rx="1.8" />
+      <line x1="1.5" y1="8" x2="16.5" y2="8" />
+      <path d="M13.5 2.5V1M13.5 2.5L15 2.5M13.5 2.5V4M13.5 2.5L12 2.5" strokeWidth="1.2" />
+      <line x1="4" y1="11" x2="7.5" y2="11" />
+      <line x1="4" y1="13" x2="10" y2="13" />
+    </svg>
+  );
+}
+
+function VPShieldCheckIcon({ size = 48 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M24 4L40 12v12c0 10-7 18-16 20C8 42 2 34 2 26V12L24 4z" stroke="rgba(52,211,153,0.9)" strokeWidth="2" fill="rgba(52,211,153,0.12)" />
+      <path d="M16 24l6 6 10-12" stroke="rgba(52,211,153,1)" strokeWidth="2.5" />
+    </svg>
+  );
+}
+
 function makeSignMessage(wallet: Wallet, account: WalletAccount) {
   return async (message: Uint8Array): Promise<Uint8Array> => {
     const feature = wallet.features["solana:signMessage"] as {
@@ -123,8 +146,8 @@ export default function ClaimPage() {
     <AppShell active="">
       <section className="app-head">
         <div className="container" style={{ maxWidth: 720, textAlign: "center" }}>
-          <span className="eyebrow" style={{ display: "inline-flex" }}>
-            {isGift ? "🎁 Gift Card" : "Claim a private payment"}
+          <span className="eyebrow" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            {isGift ? <><VPGiftCardIcon size={13} /> Gift Card</> : "Claim a private payment"}
           </span>
           <h1 className="h2" style={{ textAlign: "center" }}>
             {isGift ? "You've received a gift." : <>Someone sent you funds <em>privately.</em></>}
@@ -147,7 +170,9 @@ export default function ClaimPage() {
               }}>
                 <div style={{ position: "absolute", top: -30, right: -30, width: 140, height: 140, borderRadius: "50%", background: "radial-gradient(circle, rgba(0,179,255,.12), transparent 70%)", pointerEvents: "none" }} />
                 <div style={{ position: "relative", padding: "28px 28px 24px", textAlign: "center" }}>
-                  <div style={{ fontSize: 52, marginBottom: 16, animation: "float 2.5s ease-in-out infinite" }}>🎁</div>
+                  <div style={{ display: "flex", justifyContent: "center", marginBottom: 16, animation: "float 2.5s ease-in-out infinite", color: "rgba(0,179,255,0.8)" }}>
+                    <VPGiftCardIcon size={52} />
+                  </div>
                   {giftTo && (
                     <p style={{ fontSize: 14, color: "rgba(255,255,255,.5)", marginBottom: 6 }}>
                       For <span style={{ color: "rgba(255,255,255,.85)", fontWeight: 600 }}>{giftTo}</span>
@@ -170,7 +195,7 @@ export default function ClaimPage() {
                   onClick={() => setGiftUnwrapped(true)}
                   style={{ width: "100%", justifyContent: "center", fontSize: 15, padding: "13px" }}
                 >
-                  🎁 Unwrap Gift
+                  <VPGiftCardIcon size={16} /> Unwrap Gift
                 </button>
               )}
               {step === "scanning" && (
@@ -191,7 +216,9 @@ export default function ClaimPage() {
                 boxShadow: "0 20px 60px -12px rgba(0,0,0,.5)",
                 padding: "32px 28px", textAlign: "center",
               }}>
-                <div style={{ fontSize: 52, marginBottom: 12 }}>🎊</div>
+                <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+                  <VPShieldCheckIcon size={52} />
+                </div>
                 <p style={{ fontWeight: 700, fontSize: 26, letterSpacing: "-0.03em", marginBottom: 6, color: "#fff" }}>
                   Gift claimed!
                 </p>

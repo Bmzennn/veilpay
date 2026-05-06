@@ -5,6 +5,34 @@ import { BackgroundStage } from "@/components/BackgroundStage";
 import { VPLogo } from "@/components/AppShell";
 import { Sun, Moon, Shield, Link2, EyeOff, Zap, Key, ArrowRight, Menu, X } from "lucide-react";
 
+// ─── Custom VeilPay SVG icons ─────────────────────────────────────────────────
+
+function VPShieldEyeIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 2.5L16.5 5.5V10c0 3.8-2.8 6.6-6.5 7.5C3.3 16.6.5 13.8.5 10V5.5L10 2.5z" />
+      <path d="M7 10c0 0 1.3-2.2 3-2.2S13 10 13 10s-1.3 2.2-3 2.2S7 10 7 10z" />
+      <circle cx="10" cy="10" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function VPMerchantQRIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2" width="6" height="6" rx="1.2" />
+      <rect x="3.5" y="3.5" width="3" height="3" rx="0.5" fill="currentColor" stroke="none" />
+      <rect x="12" y="2" width="6" height="6" rx="1.2" />
+      <rect x="13.5" y="3.5" width="3" height="3" rx="0.5" fill="currentColor" stroke="none" />
+      <rect x="2" y="12" width="6" height="6" rx="1.2" />
+      <rect x="3.5" y="13.5" width="3" height="3" rx="0.5" fill="currentColor" stroke="none" />
+      <rect x="12.5" y="14" width="5" height="4" rx="0.8" />
+      <path d="M13.5 14v-1.6a1.5 1.5 0 0 1 3 0V14" strokeWidth="1.2" />
+      <circle cx="15" cy="16" r="0.8" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 // ─── Theme floater ───────────────────────────────────────────────────────────
 
 function ThemeFloater() {
@@ -290,7 +318,7 @@ export default function LandingPage() {
                   height: "100%",
                 }}>
                   <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(0,179,255,.12)", border: "0.5px solid rgba(0,179,255,.3)", display: "grid", placeItems: "center", marginBottom: 20 }}>
-                    <Shield size={22} style={{ color: "var(--vp-sky)" }} />
+                    <VPShieldEyeIcon size={22} />
                   </div>
                   <h2 style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 10, color: "var(--ink)" }}>Send privately</h2>
                   <p style={{ fontSize: 14, color: "var(--ink-3)", lineHeight: 1.55, marginBottom: 24 }}>
@@ -311,8 +339,8 @@ export default function LandingPage() {
                   cursor: "pointer", transition: "border-color .2s, transform .2s",
                   height: "100%",
                 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(107,124,255,.12)", border: "0.5px solid rgba(107,124,255,.3)", display: "grid", placeItems: "center", marginBottom: 20 }}>
-                    <span style={{ fontSize: 20 }}>🏪</span>
+                  <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(107,124,255,.12)", border: "0.5px solid rgba(107,124,255,.3)", display: "grid", placeItems: "center", marginBottom: 20, color: "var(--vp-violet)" }}>
+                    <VPMerchantQRIcon size={22} />
                   </div>
                   <h2 style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 10, color: "var(--ink)" }}>Accept payments</h2>
                   <p style={{ fontSize: 14, color: "var(--ink-3)", lineHeight: 1.55, marginBottom: 24 }}>
@@ -325,12 +353,6 @@ export default function LandingPage() {
               </a>
             </div>
 
-            {/* ── Secondary links ── */}
-            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-              <a href="/dashboard" className="btn btn-glass btn-sm" style={{ fontSize: 12 }}>Dashboard</a>
-              <a href="/gift" className="btn btn-glass btn-sm" style={{ fontSize: 12 }}>🎁 Gift Cards</a>
-              <a href="/docs" className="btn btn-glass btn-sm" style={{ fontSize: 12 }}>Docs</a>
-            </div>
           </div>
         </section>
 

@@ -196,7 +196,7 @@ footer { padding:48px 0 32px;border-top:1px solid var(--hairline);margin-top:32p
 .footer-links a:hover { color:var(--ink); }
 
 /* ─── Theme floater ─── */
-.theme-floater { position:fixed;top:50%;right:16px;transform:translateY(-50%);z-index:60; }
+.theme-floater { position:fixed;bottom:24px;right:20px;z-index:60; }
 
 /* ─── App shell ─── */
 .app-head { padding:56px 0 24px; }
@@ -469,7 +469,7 @@ footer { padding:48px 0 32px;border-top:1px solid var(--hairline);margin-top:32p
   .logo-mark { width:38px !important;height:38px !important;border-radius:10px !important; }
 
   /* Theme floater: move to bottom-left, icon-only */
-  .theme-floater { top:auto;bottom:16px;right:auto;left:16px;transform:none;padding:8px; }
+  .theme-floater { bottom:16px;right:16px;padding:8px; }
   .theme-floater-label { display:none; }
   .nav-docs-btn { display:none; }
 
