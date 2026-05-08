@@ -15,7 +15,8 @@ import {
 import {
   createBrowserSigner, makeClient, makeZkProverDeps,
   clearZkCache, getRecentTreeIndices, ensureAssociatedTokenAccount,
-  shieldFunds, auditLinkStatus, type U32, type LinkAuditResult,
+  shieldFunds, auditLinkStatus, sweepWithdrawalOverage,
+  type U32, type LinkAuditResult,
 } from "@/lib/umbra";
 import { getSolBalance, getPublicTokenBalance } from "@/lib/solana";
 import { getClaimReceiverClaimableUtxoIntoEncryptedBalanceProver } from "@umbra-privacy/web-zk-prover";
@@ -447,6 +448,13 @@ export default function DashboardPage() {
       const signer = createBrowserSigner(wallet, account);
       const client = await makeClient(signer as Parameters<typeof makeClient>[0], { skipPreflight: true });
       await ensureAssociatedTokenAccount(wallet, account, tokenCfg.mint);
+
+      // Snapshot SOL balance before withdrawal — used to detect UTXO rent return
+      const { Connection: Conn } = await import("@solana/web3.js");
+      const conn = new Conn(process.env.NEXT_PUBLIC_RPC_URL ?? "https://api.mainnet-beta.solana.com", "confirmed");
+      const { PublicKey: PK } = await import("@solana/web3.js");
+      const solBefore = await conn.getBalance(new PK(account.address as string), "confirmed");
+
       setStatus(`Withdrawing ${token} to your public wallet…`);
       const querier = getEncryptedBalanceQuerierFunction({ client });
       const mint = tokenCfg.mint as Address;
@@ -482,6 +490,19 @@ export default function DashboardPage() {
         }
       }
       if (lastErr) throw lastErr;
+
+      // Wait for Arcium MPC callback to close UTXO account and return rent
+      setStatus("Finalising withdrawal…");
+      await new Promise((r) => setTimeout(r, 6000));
+
+      // Sweep any UTXO rent that came back to the operator's wallet → overage wallet
+      // Non-fatal: withdrawal already succeeded, sweep failure just logs a warning
+      try {
+        await sweepWithdrawalOverage(wallet, account, solBefore, setStatus);
+      } catch (sweepErr) {
+        console.warn("[withdraw] overage sweep failed (non-fatal):", sweepErr);
+      }
+
       setStatus(`${token} withdrawn successfully.`);
       await refresh();
     } catch (e) {

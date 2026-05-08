@@ -2580,3 +2580,84 @@ async function sweepEphemeral(
     throw new Error(`Sweep failed: ${msg}`);
   }
 }
+
+/**
+ * Sweep the UTXO-rent SOL that returns to the withdrawer's wallet after a
+ * dashboard withdrawal. When a receiver-claimable UTXO (e.g. an x402 payment)
+ * is withdrawn, the UTXO account's rent (~0.020 SOL, originally paid by the
+ * payer) returns to the withdrawer's wallet as a net SOL gain. This function
+ * detects that gain and routes it to the operator's overage wallet.
+ *
+ * Must be called AFTER the withdrawal transaction confirms and the Arcium MPC
+ * callback has had time to close the UTXO account (allow ~6s).
+ *
+ * @param wallet         Connected Wallet Standard wallet (for signing)
+ * @param account        Connected wallet account
+ * @param solBefore      SOL balance (lamports) recorded before the withdrawal
+ * @param onStatusChange Optional status callback
+ */
+export async function sweepWithdrawalOverage(
+  wallet: Wallet,
+  account: WalletAccount,
+  solBefore: number,
+  onStatusChange?: (msg: string) => void
+): Promise<void> {
+  const overageAddr = process.env.NEXT_PUBLIC_OVERAGE_WALLET;
+  if (!overageAddr) return; // nothing configured — skip silently
+
+  const connection   = new Connection(RPC_URL, "confirmed");
+  const userPubkey   = new PublicKey(account.address as string);
+  const overagePubkey = new PublicKey(overageAddr);
+
+  const solAfter = await connection.getBalance(userPubkey, "confirmed");
+  const delta    = solAfter - solBefore; // positive = UTXO rent came back
+
+  // Only sweep if the balance actually increased — i.e., UTXO rent was returned
+  if (delta <= 5_000) return; // nothing meaningful to sweep
+
+  console.log(`[sweepWithdrawalOverage] SOL delta +${delta} lamports — sweeping to overage wallet`);
+  onStatusChange?.("Sweeping protocol fee to operator… (approve in Phantom)");
+
+  // Build a plain SOL transfer using the wallet's signTransaction capability
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+
+  // Estimate fee for the sweep tx
+  const dummyTx = new Transaction({ recentBlockhash: blockhash, feePayer: userPubkey });
+  dummyTx.add(SystemProgram.transfer({ fromPubkey: userPubkey, toPubkey: overagePubkey, lamports: 1000 }));
+  const feeCalc  = await connection.getFeeForMessage(dummyTx.compileMessage(), "confirmed");
+  const txFee    = feeCalc.value ?? 5_000;
+  const sweepAmt = delta - txFee;
+
+  if (sweepAmt <= 0) return;
+
+  const sweepTx = new Transaction({ recentBlockhash: blockhash, feePayer: userPubkey });
+  sweepTx.add(SystemProgram.transfer({ fromPubkey: userPubkey, toPubkey: overagePubkey, lamports: sweepAmt }));
+
+  // Sign via Wallet Standard signTransaction feature
+  const signTxFeature = (wallet.features as Record<string, unknown>)["solana:signTransaction"] as
+    { signTransaction: (input: { account: WalletAccount; transaction: Uint8Array; options?: { commitment?: string } }) => Promise<{ signedTransaction: Uint8Array }> } | undefined;
+
+  if (!signTxFeature?.signTransaction) {
+    console.warn("[sweepWithdrawalOverage] wallet does not support signTransaction — skipping sweep");
+    return;
+  }
+
+  const serialized = sweepTx.serializeMessage();
+  const { signedTransaction } = await signTxFeature.signTransaction({
+    account,
+    transaction: serialized,
+    options: { commitment: "confirmed" },
+  });
+
+  // Re-attach signature to the transaction and send
+  const sig = await connection.sendRawTransaction(signedTransaction, { skipPreflight: true });
+  console.log(`[sweepWithdrawalOverage] sweep tx: ${sig}`);
+
+  // Confirm (best-effort, non-fatal)
+  try {
+    await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+    console.log(`[sweepWithdrawalOverage] ✅ swept ${sweepAmt} lamports to overage wallet`);
+  } catch {
+    console.warn("[sweepWithdrawalOverage] sweep confirmation timeout — tx likely confirmed later");
+  }
+}
