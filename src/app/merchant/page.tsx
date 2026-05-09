@@ -31,9 +31,16 @@ const TOKEN_LOGOS: Record<Token, string> = {
   UMBRA: "/tokens/umbra.png", CASH: "/tokens/cash.png",
 };
 
+function phantomDeepLink(url: string): string {
+  // Wraps a URL in Phantom's universal browse deep link so scanning the QR
+  // opens the page directly inside Phantom's built-in browser on mobile,
+  // where the customer's wallet is already connected.
+  return `https://phantom.app/ul/browse/${encodeURIComponent(url)}?ref=${encodeURIComponent(window.location.origin)}`;
+}
+
 async function buildQr(url: string): Promise<string> {
   const QRCode = (await import("qrcode")).default;
-  return QRCode.toDataURL(url, {
+  return QRCode.toDataURL(phantomDeepLink(url), {
     width: 300, margin: 2,
     color: { dark: "#0a1428", light: "#ffffff" },
   });
