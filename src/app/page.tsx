@@ -92,7 +92,7 @@ function Nav() {
 
         <div className="nav-actions">
           <a className="btn btn-ghost btn-sm nav-docs-btn" href="/docs">Open docs</a>
-          <a className="btn btn-primary btn-sm" href="/create">
+          <a className="btn btn-primary btn-sm" href="/dashboard">
             Get started <ArrowRight size={14} />
           </a>
           {/* Hamburger — mobile only */}
@@ -392,7 +392,7 @@ export default function LandingPage() {
                 </p>
               </div>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <a className="btn btn-primary" href="/create">Open the app <ArrowRight size={16} /></a>
+                <a className="btn btn-primary" href="/dashboard">Open the app <ArrowRight size={16} /></a>
                 <a className="btn btn-glass" href="/docs">Read the docs</a>
               </div>
             </div>
