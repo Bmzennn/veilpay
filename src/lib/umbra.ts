@@ -2478,10 +2478,6 @@ async function sweepEphemeral(
     await new Promise(r => setTimeout(r, 2000));
   }
 
-  if (token === "SOL" && BigInt(solBalance) < originalAmountRaw) {
-    throw new Error(`SOL never arrived in gateway wallet. Current balance: ${solBalance / 1e9} SOL. Needed: ${Number(originalAmountRaw) / 1e9} SOL.`);
-  }
-
   const { blockhash } = await connection.getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
   tx.feePayer = ephemeralPubkey;
@@ -2490,37 +2486,21 @@ async function sweepEphemeral(
     let recipientSol = 0n;
     let overageSol = 0n;
     
-    let addedRecipientTransfer = false;
-    let addedOverageTransfer = false;
-
-    // Add dummy transfers to estimate the exact network fee
-    if (token === "SOL") {
-      tx.add(SystemProgram.transfer({ fromPubkey: ephemeralPubkey, toPubkey: recipientPubkey, lamports: 1000 }));
-      addedRecipientTransfer = true;
-    }
-    tx.add(SystemProgram.transfer({ fromPubkey: ephemeralPubkey, toPubkey: OVERAGE_WALLET, lamports: 1000 }));
-    addedOverageTransfer = true;
-    
-    const feeCalc = await connection.getFeeForMessage(tx.compileMessage(), "confirmed");
-    const fee = BigInt(feeCalc.value || 5000);
-    
-    // Remove the dummies
-    if (addedOverageTransfer) tx.instructions.pop();
-    if (addedRecipientTransfer) tx.instructions.pop();
-
-    const totalAvailableSol = BigInt(solBalance) - fee;
+    // Estimate fee: Standard transfer + potentially Token transfers
+    // A safe peak fee on mainnet is 10k lamports
+    const estimatedFee = 10000n;
+    const availableAfterFee = BigInt(solBalance) - estimatedFee;
 
     if (token === "SOL") {
-      if (totalAvailableSol >= originalAmountRaw) {
-        recipientSol = originalAmountRaw;
-        overageSol = totalAvailableSol - originalAmountRaw;
-      } else {
-        recipientSol = totalAvailableSol > 0n ? totalAvailableSol : 0n;
-        overageSol = 0n;
-      }
+      // For SOL links, deliver EVERYTHING left in the gateway to the user.
+      // This includes the original amount AND any remaining registration buffer.
+      recipientSol = availableAfterFee > 0n ? availableAfterFee : 0n;
+      overageSol = 0n;
     } else {
+      // For Token links, the user already got the tokens (added to tx above).
+      // The remaining SOL in the gateway is the operator's registration buffer + rent.
       recipientSol = 0n;
-      overageSol = totalAvailableSol > 0n ? totalAvailableSol : 0n;
+      overageSol = availableAfterFee > 0n ? availableAfterFee : 0n;
     }
 
     if (recipientSol > 0n) {
@@ -2546,7 +2526,7 @@ async function sweepEphemeral(
     if (tx.instructions.length > 0) {
       tx.sign(ephemeralKeypair);
       const sweepSig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
-      console.log(`[sweep] sweep tx submitted: ${sweepSig}`);
+      console.log(`[sweep] delivery tx submitted: ${sweepSig}`);
 
       // Poll for confirmation — no WebSocket dependency
       let confirmed = false;
@@ -2555,7 +2535,7 @@ async function sweepEphemeral(
         const status = await connection.getSignatureStatus(sweepSig, { searchTransactionHistory: false });
         const conf = status.value?.confirmationStatus;
         if (conf === "confirmed" || conf === "finalized") {
-          console.log(`[sweep] ✅ sweep confirmed (${conf}) — sig: ${sweepSig}`);
+          console.log(`[sweep] ✅ delivery confirmed (${conf}) — sig: ${sweepSig}`);
           confirmed = true;
           break;
         }
@@ -2569,8 +2549,7 @@ async function sweepEphemeral(
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn("[sweep] Failed to sweep remaining ephemeral balance:", msg);
-    // Surface the error regardless of token type so the caller knows the sweep failed
-    throw new Error(`Sweep failed: ${msg}`);
+    console.warn("[sweep] Failed to deliver remaining ephemeral balance:", msg);
+    throw new Error(`Delivery failed: ${msg}`);
   }
 }
