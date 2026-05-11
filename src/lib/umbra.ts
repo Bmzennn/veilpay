@@ -323,7 +323,7 @@ export async function preloadClaimAssets() {
   try {
     const provider = getPersistentZkAssetProvider();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await provider.getAssetUrls("claimreceiverclaimableutxointoencryptedbalance" as any);
+    await provider.getAssetUrls("claimDepositIntoConfidentialAmount" as any);
     console.log("[zkCache] Proactive pre-load complete.");
   } catch (e) {
     console.warn("[zkCache] Proactive pre-load failed (will retry on-demand):", e);
@@ -2471,7 +2471,7 @@ async function sweepEphemeral(
     // For token links, we don't need to wait for SOL (it's just the rent being returned)
     if (token !== "SOL") break;
     
-    if (i % 5 === 0) process.stdout.write(".");
+    if (i % 5 === 0) console.log("[sweep] Waiting for SOL balance update...");
     await new Promise(r => setTimeout(r, 2000));
   }
 
