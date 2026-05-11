@@ -2122,14 +2122,42 @@ export async function claimPaymentLink({
           onStatusChange("Waiting for ZK proof verification…");
           for (const [, batch] of claimResult.batches) {
             console.log(`[claim] Polling batch: ${batch.requestId}`);
-            await pollClaimUntilTerminal((rid) => relayer.pollClaimStatus(rid), batch.requestId, {
+            const final = await pollClaimUntilTerminal((rid) => relayer.pollClaimStatus(rid), batch.requestId, {
               pollingIntervalMs: 1500,
               onProgress: (ev) => onStatusChange(ev.status === "finalizing" ? "ZK proof verifying…" : "ZK proof submitting…"),
             });
+            
+            console.log(`[claim] Batch ${batch.requestId} finished with status: ${final.status}`);
+
+            if (final.status === "failed") {
+              const reason = final.failureReason ?? "Unknown relayer error";
+              console.error(`[claim] Relayer reported failure: ${reason}`);
+              
+              // If it's already burnt, it means the claim is already in progress/finished
+              if (reason.includes("0x6d64") || reason.includes("NullifierAlreadyBurnt")) {
+                console.log("[claim] Nullifier already burnt. Assuming success and proceeding…");
+                success = true;
+                break; 
+              }
+
+              // Retry on RPC/Network errors
+              const isTransient = reason.toLowerCase().includes("rpc") || reason.toLowerCase().includes("fetch");
+              if (isTransient && attempt < 3) {
+                console.log(`[claim] Transient error, retrying batch...`);
+                throw new Error(reason); // Catch and retry while loop
+              }
+
+              throw new Error(`ZK Claim failed: ${reason}`);
+            }
           }
           success = true;
         } catch (e: any) {
-          if (e.message.includes("0x6d64")) { success = true; break; }
+          const msg = e.message ?? String(e);
+          if (msg.includes("0x6d64") || msg.includes("NullifierAlreadyBurnt")) { 
+            success = true; 
+            break; 
+          }
+          console.warn(`[claim] Phase 1 attempt ${attempt} failed:`, msg);
           if (attempt === 3) throw e;
           attempt++; await new Promise(r => setTimeout(r, 2000));
         }
@@ -2142,22 +2170,26 @@ export async function claimPaymentLink({
       onStatusChange("Sending to your wallet…");
       const withdraw = getEncryptedBalanceToPublicBalanceDirectWithdrawerFunction({ client });
 
-      for (let attempt = 1; attempt <= 20; attempt++) {
+      for (let attempt = 1; attempt <= 40; attempt++) {
         try {
           const currentMap = await querier([mintAddress]);
           const res = currentMap.get(mintAddress);
           const currentVaultBal = res?.state === "shared" ? BigInt(res.balance.toString()) : 0n;
+          
+          console.log(`[claim] Phase 2 attempt ${attempt}/40: Vault balance is ${currentVaultBal}`);
 
           if (currentVaultBal > 0n) {
             if (originalAmountRaw === 0n) originalAmountRaw = currentVaultBal;
             await ensureEphemeralAta(connection, Keypair.fromSeed(ephemeralPrivateKey.slice(0, 32)), tokenCfg.mint);
             withdrawResult = await withdraw(ephemeralSigner.address as Address, mintAddress, currentVaultBal as any);
+            console.log(`[claim] Withdrawal initiated. Sig: ${withdrawResult.queueSignature}`);
             break; 
           }
-          if (attempt === 20) throw new Error("Encrypted balance is 0. Waiting for RPC to sync…");
+          if (attempt === 40) throw new Error("Private vault balance is still 0 after 2 minutes. The ZK claim may still be propagating.");
           await new Promise(r => setTimeout(r, 3000));
         } catch (e) {
-          if (attempt === 20) throw e;
+          console.warn(`[claim] Phase 2 attempt ${attempt} error:`, e);
+          if (attempt === 40) throw e;
           await new Promise(r => setTimeout(r, 3000));
         }
       }
