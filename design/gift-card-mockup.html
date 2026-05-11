@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VeilPay Gift Card Mockup</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500&display=swap');
+
+        :root {
+            --vp-sky: #00b3ff;
+            --vp-sky-2: #4dd0ff;
+            --vp-sky-deep: #0080ff;
+            --vp-violet: #6b7cff;
+            --bg-midnight: #040814;
+            --font-sans: 'Geist', sans-serif;
+            --font-mono: 'Geist+Mono', monospace;
+        }
+
+        body {
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 60px;
+            padding: 80px 20px;
+            margin: 0;
+            font-family: var(--font-sans);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .card-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        /* Standard CR80 Card Dimensions: 1012 x 638 pixels at 300 DPI */
+        .card {
+            width: 1012px;
+            height: 638px;
+            border-radius: 44px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 40px 100px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05);
+            background: var(--bg-midnight);
+            color: white;
+            transition: transform 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        /* ─── Front ─── */
+        .card-front {
+            background: linear-gradient(135deg, #0a1428 0%, #0d1f3a 50%, #071020 100%);
+        }
+
+        .orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.7;
+        }
+        .orb-1 {
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, var(--vp-sky), transparent 70%);
+            top: -200px;
+            left: -100px;
+        }
+        .orb-2 {
+            width: 700px;
+            height: 700px;
+            background: radial-gradient(circle, var(--vp-violet), transparent 70%);
+            bottom: -300px;
+            right: -200px;
+        }
+
+        .logo-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 30px;
+        }
+
+        .logo-img {
+            width: 480px;
+            height: auto;
+            filter: drop-shadow(0 0 50px rgba(0,179,255,0.5));
+        }
+
+        .card-label {
+            position: absolute;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 16px;
+            font-weight: 500;
+            letter-spacing: 0.4em;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.3);
+        }
+
+        .amount-tag {
+            position: absolute;
+            top: 60px;
+            right: 70px;
+            font-size: 42px;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+        .amount-tag span {
+            font-size: 24px;
+            font-weight: 500;
+            opacity: 0.5;
+            margin-left: 6px;
+        }
+
+        /* ─── Back ─── */
+        .card-back {
+            background: #fff;
+            color: #000;
+        }
+
+        .back-content {
+            padding: 70px;
+            height: calc(100% - 140px);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .qr-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            flex: 1;
+            margin-bottom: 40px;
+        }
+
+        .qr-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .qr-code {
+            width: 240px;
+            height: 240px;
+            background: #000;
+            border-radius: 24px;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .qr-img {
+            width: 200px;
+            height: 200px;
+        }
+
+        .qr-label {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: #888;
+        }
+
+        .instructions {
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            height: 100%;
+        }
+        .instructions h3 {
+            font-size: 32px;
+            font-weight: 800;
+            margin: 0 0 20px;
+            letter-spacing: -0.02em;
+        }
+        .instructions p {
+            font-size: 22px;
+            line-height: 1.5;
+            color: #444;
+            margin: 0;
+        }
+
+        .footer-legal {
+            font-size: 14px;
+            color: #888;
+            line-height: 1.5;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            border-top: 1px solid #eee;
+            padding-top: 30px;
+        }
+
+        .to-from {
+            display: flex;
+            gap: 60px;
+            margin-top: 40px;
+        }
+        .field {
+            border-bottom: 2px solid #eee;
+            width: 220px;
+            padding-bottom: 8px;
+        }
+        .field label {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #bbb;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .save-btn {
+            background: #fff;
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            font-size: 14px;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        .save-btn:hover { opacity: 1; }
+
+        h2.section-label {
+            color: #888;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            margin: 0;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+
+    <div class="card-container">
+        <h2 class="section-label">Gift Card Front</h2>
+        <div class="card card-front" id="card-front">
+            <div class="orb orb-1"></div>
+            <div class="orb orb-2"></div>
+            <div class="amount-tag">100<span>USDC</span></div>
+            <div class="logo-container">
+                <img src="logo-nobg.png" class="logo-img" alt="VeilPay Logo">
+            </div>
+            <div class="card-label">Private Payment // Zero Traces</div>
+        </div>
+        <button class="save-btn" onclick="save('card-front', 'veilpay-front.png')">Save Front as PNG</button>
+    </div>
+
+    <div class="card-container">
+        <h2 class="section-label">Gift Card Back</h2>
+        <div class="card card-back" id="card-back">
+            <div class="back-content">
+                <div class="qr-section">
+                    <div class="instructions">
+                        <h3>Claim your asset</h3>
+                        <p>1. Open your camera or QR scanner.</p>
+                        <p>2. Scan the QR code to claim your funds.</p>
+                        <p style="margin-top: 10px; font-size: 18px; color: #888;">You will be redirected to the secure claim page.</p>
+                        <div class="to-from">
+                            <div class="field"><label>To</label></div>
+                            <div class="field"><label>From</label></div>
+                        </div>
+                    </div>
+                    <div class="qr-wrapper">
+                        <div class="qr-code">
+                            <!-- Real QR pointing to veilpayments.xyz/claim -->
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://veilpayments.xyz/claim" class="qr-img" alt="QR Code">
+                        </div>
+                        <span class="qr-label">Scan to Claim</span>
+                    </div>
+                </div>
+                <div class="footer-legal">
+                    <div>
+                        POWERED BY UMBRA ZK-SHIELDED POOL // SOLANA MAINNET<br>
+                        No expiration. Non-refundable. Private claimable asset.
+                    </div>
+                    <div style="text-align: right; font-weight: 700; font-size: 24px; color: #000; letter-spacing: -0.03em;">
+                        VEILPAYMENTS.XYZ
+                    </div>
+                </div>
+            </div>
+        </div>
+        <button class="save-btn" onclick="save('card-back', 'veilpay-back.png')">Save Back as PNG</button>
+    </div>
+
+    <script>
+        function save(id, filename) {
+            const el = document.getElementById(id);
+            // Wait for images to be loaded
+            html2canvas(el, {
+                scale: 2,
+                backgroundColor: null,
+                logging: false,
+                useCORS: true,
+                allowTaint: true
+            }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = filename;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            });
+        }
+    </script>
+
+</body>
+</html>
