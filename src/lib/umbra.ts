@@ -2414,6 +2414,7 @@ async function ensureEphemeralAta(
 
 // ─── Sweep Ephemeral ─────────────────────────────────────────────────────────
 
+// VeilPay Stability Update v1.2 - Force Sync
 async function sweepEphemeral(
   ephemeralPrivateKey: Uint8Array,
   token: Token,
