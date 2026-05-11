@@ -268,14 +268,23 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
       const assetEntry = manifestCache.assets[type];
       if (!assetEntry) throw new Error(`ZK asset type '${type}' not found in manifest`);
 
-      let rawUrl: string;
+      let rawUrl: string | undefined;
+      // Handle multi-variant assets (like claimDepositIntoConfidentialAmount)
       if (variant !== undefined && !("url" in assetEntry)) {
         const variantEntry = (assetEntry as Record<string, ManifestEntry>)[variant];
         if (!variantEntry) throw new Error(`ZK variant '${variant}' not found for '${type}'`);
         rawUrl = variantEntry.url;
+      } else if (!("url" in assetEntry)) {
+        // Fallback for multi-variant assets when no variant is specified (e.g., pre-load)
+        // Most Umbra claim assets default to 'n1' variant.
+        const variants = assetEntry as Record<string, ManifestEntry>;
+        const firstVariant = variants[variant || "n1"] || Object.values(variants)[0];
+        rawUrl = firstVariant?.url;
       } else {
         rawUrl = (assetEntry as ManifestEntry).url;
       }
+
+      if (!rawUrl) throw new Error(`Could not resolve URL for ZK asset '${type}' (variant: ${variant})`);
 
       const fullZkeyUrl = rawUrl.startsWith("http") ? rawUrl : `${CDN_BASE}/${rawUrl}`;
       const fullWasmUrl = fullZkeyUrl.replace(/\.zkey$/i, ".wasm");
@@ -323,7 +332,7 @@ export async function preloadClaimAssets() {
   try {
     const provider = getPersistentZkAssetProvider();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await provider.getAssetUrls("claimDepositIntoConfidentialAmount" as any);
+    await provider.getAssetUrls("claimDepositIntoConfidentialAmount" as any, "n1");
     console.log("[zkCache] Proactive pre-load complete.");
   } catch (e) {
     console.warn("[zkCache] Proactive pre-load failed (will retry on-demand):", e);
@@ -2104,8 +2113,15 @@ export async function claimPaymentLink({
       while (attempt <= 3 && !success) {
         try {
           const claimResult = await claim([utxo]);
+          console.log(`[claim] ZK proof generated. Batches to poll: ${claimResult.batches.size}`);
+          
+          if (claimResult.batches.size === 0) {
+            console.warn("[claim] Warning: No batches returned by claim function!");
+          }
+
           onStatusChange("Waiting for ZK proof verification…");
           for (const [, batch] of claimResult.batches) {
+            console.log(`[claim] Polling batch: ${batch.requestId}`);
             await pollClaimUntilTerminal((rid) => relayer.pollClaimStatus(rid), batch.requestId, {
               pollingIntervalMs: 1500,
               onProgress: (ev) => onStatusChange(ev.status === "finalizing" ? "ZK proof verifying…" : "ZK proof submitting…"),
