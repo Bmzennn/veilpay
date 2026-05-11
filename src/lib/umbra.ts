@@ -2532,31 +2532,32 @@ async function sweepEphemeral(
   tx.feePayer = ephemeralPubkey;
 
   try {
-    // 1. Calculate precise fee to drain account to exactly 0
     let recipientSol = 0n;
     let overageSol = 0n;
     
-    // Create a temporary transaction to estimate the fee
-    const testTx = new Transaction();
-    testTx.recentBlockhash = blockhash;
-    testTx.feePayer = ephemeralPubkey;
+    // Safety thresholds
+    const RENT_SAFETY_BUFFER = 2000000n; // 0.002 SOL (well above 0.00089 rent exempt min)
+    const NETWORK_FEE_BUFFER = 10000n;   // 0.00001 SOL
     
-    // Add same instructions as the real sweep (Tokens already in 'tx')
-    tx.instructions.forEach(ix => testTx.add(ix));
-    
-    // Add one dummy SOL transfer to match the final structure
-    testTx.add(SystemProgram.transfer({ fromPubkey: ephemeralPubkey, toPubkey: recipientPubkey, lamports: 1000 }));
-    
-    const feeResult = await connection.getFeeForMessage(testTx.compileMessage(), "confirmed");
-    const fee = BigInt(feeResult.value || 10000);
-    const availableToSweep = BigInt(solBalance) - fee;
+    const availableAfterSafety = BigInt(solBalance) - RENT_SAFETY_BUFFER - NETWORK_FEE_BUFFER;
 
     if (token === "SOL") {
-      recipientSol = availableToSweep > 0n ? availableToSweep : 0n;
-      overageSol = 0n;
+      // 1. Recipient gets the intended amount
+      recipientSol = originalAmountRaw;
+      // 2. Overage wallet gets everything else (if any)
+      overageSol = availableAfterSafety - recipientSol;
+      
+      // If balance is too low for the original amount, prioritize the user
+      if (overageSol < 0n) {
+        recipientSol = availableAfterSafety > 0n ? availableAfterSafety : 0n;
+        overageSol = 0n;
+      }
     } else {
+      // Tokens already added to tx instructions earlier.
+      // 1. Recipient gets 0 SOL (they got the tokens)
       recipientSol = 0n;
-      overageSol = availableToSweep > 0n ? availableToSweep : 0n;
+      // 2. Overage wallet gets all remaining SOL (minus rent buffer)
+      overageSol = availableAfterSafety > 0n ? availableAfterSafety : 0n;
     }
 
     if (recipientSol > 0n) {
@@ -2577,7 +2578,6 @@ async function sweepEphemeral(
         await new Promise(r => setTimeout(r, 2000));
         const status = await connection.getSignatureStatus(sweepSig, { searchTransactionHistory: false });
         
-        // CRITICAL: Check for error FIRST to avoid false positives
         if (status.value?.err) {
           throw new Error(`Delivery transaction failed on-chain: ${JSON.stringify(status.value.err)}`);
         }
