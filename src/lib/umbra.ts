@@ -1457,6 +1457,7 @@ export async function createPaymentLink({
 export interface ScanResult {
   hasUtxo: boolean;
   hasEncryptedBalance: boolean;
+  hasPublicBalance: boolean;
   amountHuman: string;
   token: Token;
   amountRaw: bigint;
