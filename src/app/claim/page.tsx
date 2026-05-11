@@ -110,7 +110,7 @@ export default function ClaimPage() {
         const result = await scanForUtxo(claimSecret, token, { maxAttempts: 15, retryDelayMs: 4000 });
         if (cancelled) return;
         
-        if (!result.hasUtxo && !result.hasEncryptedBalance && !result.hasPublicBalance) {
+        if (!result.hasUtxo && !result.hasEncryptedBalance && !(result as any).hasPublicBalance) {
           setError("No unclaimed payment found for this link.");
           setStep("preview");
           return;
@@ -118,7 +118,7 @@ export default function ClaimPage() {
 
         if (result.hasEncryptedBalance) {
           setIsResuming(true);
-        } else if (result.hasPublicBalance) {
+        } else if ((result as any).hasPublicBalance) {
           setIsStuckSweep(true);
         }
 
