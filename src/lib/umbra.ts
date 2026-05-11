@@ -1973,7 +1973,7 @@ export async function scanForUtxo(
         const decimals = TOKEN_CONFIG[token].decimals;
         const amountRaw = BigInt(foundUtxo.amount.toString());
         const amountHuman = formatHumanAmount(amountRaw, decimals);
-        return { hasUtxo: true, amountHuman, token, amountRaw };
+        return { hasUtxo: true, hasEncryptedBalance: false, hasPublicBalance: false, amountHuman, token, amountRaw };
       }
 
       if (attempt < maxAttempts) {
@@ -1982,7 +1982,7 @@ export async function scanForUtxo(
       }
     }
 
-    return { hasUtxo: false, amountHuman: "0", token, amountRaw: 0n };
+    return { hasUtxo: false, hasEncryptedBalance: false, hasPublicBalance: false, amountHuman: "0", token, amountRaw: 0n };
   } catch (err) {
     throw new Error(normalizeError(err));
   }
