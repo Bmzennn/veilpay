@@ -1456,6 +1456,7 @@ export async function createPaymentLink({
 
 export interface ScanResult {
   hasUtxo: boolean;
+  hasEncryptedBalance: boolean;
   amountHuman: string;
   token: Token;
   amountRaw: bigint;
@@ -1866,9 +1867,57 @@ export async function scanForUtxo(
   try {
     const ephemeralPrivateKey = bs58.decode(claimSecret);
     const ephemeralSigner = await createEphemeralSigner(ephemeralPrivateKey);
+    const ephemeralPubkey = new PublicKey(ephemeralSigner.address.toString());
     const client = await makeClient(ephemeralSigner);
-    const scanner = getClaimableUtxoScannerFunction({ client });
+    const connection = new Connection(RPC_URL, "confirmed");
 
+    // 1. Check if funds are already in the ephemeral wallet's public balance (stuck sweep)
+    const tokenCfg = TOKEN_CONFIG[token];
+    if (token === "SOL") {
+      const solBal = await connection.getBalance(ephemeralPubkey, "confirmed");
+      // If it's a SOL link, the balance must be > initial buffer + original amount
+      // Since we don't have original amount here, we look for a significant balance (> 0.025 SOL)
+      if (solBal > 25000000) {
+        console.log(`[scanForUtxo] Found stuck public SOL balance: ${solBal / 1e9}`);
+        return { 
+          hasUtxo: false, hasEncryptedBalance: false, hasPublicBalance: true, 
+          amountHuman: (solBal / 1e9).toFixed(4), token, amountRaw: BigInt(solBal) 
+        };
+      }
+    } else {
+      const mintPubkey = new PublicKey(tokenCfg.mint);
+      const ata = getAssociatedTokenAddressSync(mintPubkey, ephemeralPubkey, true);
+      try {
+        const info = await connection.getTokenAccountBalance(ata, "confirmed");
+        const bal = BigInt(info.value.amount);
+        if (bal > 0n) {
+          console.log(`[scanForUtxo] Found stuck public ${token} balance: ${info.value.uiAmount}`);
+          return { 
+            hasUtxo: false, hasEncryptedBalance: false, hasPublicBalance: true, 
+            amountHuman: info.value.uiAmountString || "0", token, amountRaw: bal 
+          };
+        }
+      } catch { /* ATA missing — expected */ }
+    }
+
+    // 2. Check if funds are in the encrypted balance (partially claimed)
+    const querier = getEncryptedBalanceQuerierFunction({ client });
+    const mintAddress = tokenCfg.mint as Address;
+    const balanceMap = await querier([mintAddress]);
+    const balanceResult = balanceMap.get(mintAddress);
+
+    if (
+      balanceResult?.state === "shared" &&
+      BigInt(balanceResult.balance.toString()) > 0n
+    ) {
+      const decimals = tokenCfg.decimals;
+      const amountRaw = BigInt(balanceResult.balance.toString());
+      const amountHuman = formatHumanAmount(amountRaw, decimals);
+      console.log(`[scanForUtxo] Found existing encrypted balance: ${amountHuman} ${token}`);
+      return { hasUtxo: false, hasEncryptedBalance: true, hasPublicBalance: false, amountHuman, token, amountRaw };
+    }
+
+    const scanner = getClaimableUtxoScannerFunction({ client });
     const treeIndices = await getRecentTreeIndices();
     console.log("[scanForUtxo] scanning trees:", treeIndices.map(String));
     await debugLogRecentUtxos(ephemeralSigner.address.toString());
@@ -2007,203 +2056,112 @@ export async function claimPaymentLink({
 
     const tokenCfg = TOKEN_CONFIG[token];
     const mintAddress = tokenCfg.mint as Address;
+    const mintPubkey = new PublicKey(tokenCfg.mint);
+    const ephemeralPubkey = new PublicKey(ephemeralSigner.address.toString());
     
-    // Fast-path recovery check: Did the user already complete the ZK proof step?
+    // Recovery check: Where are the funds?
     const querier = getEncryptedBalanceQuerierFunction({ client });
     const balanceMap = await querier([mintAddress]);
-    const existingBalanceResult = balanceMap.get(mintAddress);
-    const hasEncryptedBalance = existingBalanceResult?.state === "shared" && BigInt(existingBalanceResult.balance.toString()) > 0n;
+    const vaultResult = balanceMap.get(mintAddress);
+    const vaultBalance = vaultResult?.state === "shared" ? BigInt(vaultResult.balance.toString()) : 0n;
 
-    if (!utxo && !hasEncryptedBalance) {
+    let publicBalance = 0n;
+    if (token === "SOL") {
+      publicBalance = BigInt(await connection.getBalance(ephemeralPubkey, "confirmed"));
+    } else {
+      const ata = getAssociatedTokenAddressSync(mintPubkey, ephemeralPubkey, true);
+      try {
+        const info = await connection.getTokenAccountBalance(ata, "confirmed");
+        publicBalance = BigInt(info.value.amount);
+      } catch { /* ATA missing */ }
+    }
+
+    console.log(`[claim] Status check: UTXO=${!!utxo}, Vault=${vaultBalance}, Public=${publicBalance}`);
+
+    if (!utxo && vaultBalance === 0n && publicBalance === 0n) {
       throw new Error("This payment link has already been claimed or does not exist.");
     }
 
     let originalAmountRaw = 0n;
+    let withdrawResult;
 
-    // If we have a UTXO, run the heavy ZK proof generation to move it into the encrypted balance
+    // Phase 1: Pool → Vault
     if (utxo) {
       originalAmountRaw = BigInt(utxo.amount.toString());
-      // Claim UTXO → ephemeral encrypted balance (relayer pays fees)
       onStatusChange("Breaking on-chain link…");
       const relayer = getUmbraRelayer({ apiEndpoint: UMBRA_RELAYER_URL });
       const claimProver = getClaimReceiverClaimableUtxoIntoEncryptedBalanceProver(makeZkProverDeps());
 
-      if (!client.fetchBatchMerkleProof) {
-        throw new Error("Umbra indexer is unavailable — fetchBatchMerkleProof missing.");
-      }
+      if (!client.fetchBatchMerkleProof) throw new Error("Umbra indexer unavailable.");
 
       const claim = getReceiverClaimableUtxoToEncryptedBalanceClaimerFunction(
-        { client },
-        {
-          fetchBatchMerkleProof: client.fetchBatchMerkleProof,
-          zkProver: claimProver,
-          relayer,
-        }
+        { client }, { fetchBatchMerkleProof: client.fetchBatchMerkleProof, zkProver: claimProver, relayer }
       );
       
       let attempt = 1;
-      const maxAttempts = 3;
       let success = false;
-
-      while (attempt <= maxAttempts && !success) {
+      while (attempt <= 3 && !success) {
         try {
           const claimResult = await claim([utxo]);
-
-          // Poll each batch until the ZK computation finalizes
-          onStatusChange(`Waiting for ZK proof verification${attempt > 1 ? ` (attempt ${attempt})` : ""}…`);
+          onStatusChange("Waiting for ZK proof verification…");
           for (const [, batch] of claimResult.batches) {
-            const final = await pollClaimUntilTerminal(
-              (rid) => relayer.pollClaimStatus(rid),
-              batch.requestId,
-              {
-                pollingIntervalMs: 1500, // Faster polling
-                onProgress: (event) => {
-                  if (event.status === "submitting" || event.status === "submitted") {
-                    onStatusChange("ZK proof submitting on-chain…");
-                  } else if (event.status === "awaiting_callback" || event.status === "finalizing") {
-                    onStatusChange("ZK proof verifying on-chain…");
-                  }
-                },
-              }
-            );
-
-            if (final.status === "failed") {
-              const burnt = final.failureReason?.includes("0x6d64") || final.failureReason?.includes("NullifierAlreadyBurnt");
-              if (burnt) {
-                success = true;
-                break;
-              }
-              
-              // If it's a transient RPC error from the relayer, retry the whole claim
-              const isRpcError = final.failureReason?.toLowerCase().includes("rpc error") || 
-                                final.failureReason?.toLowerCase().includes("response format") ||
-                                final.failureReason?.toLowerCase().includes("fetch");
-              
-              if (isRpcError && attempt < maxAttempts) {
-                attempt++;
-                const delay = 2000 * (attempt - 1);
-                onStatusChange(`RPC error, retrying (${attempt}/${maxAttempts})…`);
-                await new Promise(r => setTimeout(r, delay));
-                continue; // Retry while loop
-              }
-              
-              throw new Error(final.failureReason ?? "Unknown failure");
-            }
+            await pollClaimUntilTerminal((rid) => relayer.pollClaimStatus(rid), batch.requestId, {
+              pollingIntervalMs: 1500,
+              onProgress: (ev) => onStatusChange(ev.status === "finalizing" ? "ZK proof verifying…" : "ZK proof submitting…"),
+            });
           }
           success = true;
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          const isBurnt = msg.includes("0x6d64") || msg.includes("NullifierAlreadyBurnt");
-          if (isBurnt) {
-            success = true;
-            break;
-          }
-
-          const isRpcError = msg.toLowerCase().includes("rpc error") || 
-                            msg.toLowerCase().includes("response format") ||
-                            msg.toLowerCase().includes("fetch") ||
-                            msg.toLowerCase().includes("failed to fetch");
-
-          if (isRpcError && attempt < maxAttempts) {
-            attempt++;
-            const delay = 2000 * (attempt - 1);
-            onStatusChange(`RPC error, retrying (${attempt}/${maxAttempts})…`);
-            await new Promise(r => setTimeout(r, delay));
-            continue; // Retry while loop
-          }
-
-          throw e;
+        } catch (e: any) {
+          if (e.message.includes("0x6d64")) { success = true; break; }
+          if (attempt === 3) throw e;
+          attempt++; await new Promise(r => setTimeout(r, 2000));
         }
       }
-      
-      // Reduced initial delay from 10s to 5s. 
-      // We rely on the tighter polling loop below to detect on-chain propagation.
       await new Promise(r => setTimeout(r, 5000)); 
+    }
+
+    // Phase 2: Vault → Public Wallet
+    if (publicBalance === 0n) {
+      onStatusChange("Sending to your wallet…");
+      const withdraw = getEncryptedBalanceToPublicBalanceDirectWithdrawerFunction({ client });
+
+      for (let attempt = 1; attempt <= 20; attempt++) {
+        try {
+          const currentMap = await querier([mintAddress]);
+          const res = currentMap.get(mintAddress);
+          const currentVaultBal = res?.state === "shared" ? BigInt(res.balance.toString()) : 0n;
+
+          if (currentVaultBal > 0n) {
+            if (originalAmountRaw === 0n) originalAmountRaw = currentVaultBal;
+            await ensureEphemeralAta(connection, Keypair.fromSeed(ephemeralPrivateKey.slice(0, 32)), tokenCfg.mint);
+            withdrawResult = await withdraw(ephemeralSigner.address as Address, mintAddress, currentVaultBal as any);
+            break; 
+          }
+          if (attempt === 20) throw new Error("Encrypted balance is 0. Waiting for RPC to sync…");
+          await new Promise(r => setTimeout(r, 3000));
+        } catch (e) {
+          if (attempt === 20) throw e;
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      }
     } else {
-      // If we don't have a UTXO but DO have an encrypted balance, we are resuming a failed withdrawal
-      onStatusChange("Resuming pending withdrawal…");
-      // Since the UTXO is gone, we don't have the pre-fee original amount easily available.
-      // For resumes, we will just use the current encrypted balance as the original amount
-      // to ensure the full remainder gets swept to the recipient.
-      if (existingBalanceResult?.state === "shared") {
-        originalAmountRaw = BigInt(existingBalanceResult.balance.toString());
-      }
+      onStatusChange("Resuming delivery…");
+      if (originalAmountRaw === 0n) originalAmountRaw = publicBalance;
     }
 
-    // Ensure the ephemeral signer's SPL token ATA exists.
-    // The Umbra withdrawal instruction requires userSplAta (the destination wSOL
-    // ATA derived from the ephemeral signer's address) to be pre-initialized.
-    // If it doesn't exist the validator drops the transaction silently (AccountNotFound).
-    onStatusChange("Preparing token account…");
-    const claimConnection = new Connection(RPC_URL, "confirmed");
-    const claimEphemeralKeypair = Keypair.fromSeed(
-      ephemeralPrivateKey.length === 32 ? ephemeralPrivateKey : ephemeralPrivateKey.slice(0, 32)
-    );
-    await ensureEphemeralAta(claimConnection, claimEphemeralKeypair, tokenCfg.mint);
-
-    // Withdraw from ephemeral encrypted balance → recipient public ATA
-    onStatusChange("Sending to your wallet…");
-    const withdraw = getEncryptedBalanceToPublicBalanceDirectWithdrawerFunction({ client });
-
-    let withdrawResult;
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      try {
-        // Query the exact encrypted balance available.
-        const currentBalanceMap = await querier([mintAddress]);
-        const balanceResult = currentBalanceMap.get(mintAddress);
-
-        if (!balanceResult || balanceResult.state !== "shared") {
-          throw new Error("Encrypted balance not found or not in shared state.");
-        }
-
-        const availableBalance = BigInt(balanceResult.balance.toString());
-        console.log(`[withdraw] Attempt ${attempt}: Available balance is ${availableBalance}`);
-        if (availableBalance === 0n) {
-          throw new Error("Encrypted balance is 0. Waiting for RPC to sync the claim...");
-        }
-
-        // Note: The Umbra SDK direct withdrawal instruction forces the destination
-        // ATA to be derived from the userAddress (which here is the ephemeralSigner).
-        // Therefore, we pass ephemeralSigner.address, and later sweep the funds manually.
-        withdrawResult = await withdraw(
-          ephemeralSigner.address as Address,
-          mintAddress,
-          availableBalance as unknown as Parameters<typeof withdraw>[2]
-        );
-        break; // Success
-      } catch (e) {
-        console.warn(`Withdrawal attempt ${attempt} failed:`, e);
-        if (attempt === 5) throw e;
-        // Brief pause so the RPC gets a new slot (and thus a fresh blockhash)
-        await new Promise(r => setTimeout(r, 1000));
-      }
-    }
-    
-    if (!withdrawResult) throw new Error("Withdrawal failed: RPC did not sync the encrypted balance in time.");
-
-    // The SDK ignores destinationAddress and withdraws to the signer (ephemeral wallet).
-    // We now sweep the ephemeral wallet's balance to the actual recipient.
-    onStatusChange("Sweeping funds to your wallet…");
+    // Phase 3: Public Wallet → Recipient Wallet
+    onStatusChange("Delivering to your wallet…");
     try {
-      await sweepEphemeral(
-        ephemeralPrivateKey,
-        token,
-        recipientAddress,
-        originalAmountRaw
-      );
+      await sweepEphemeral(ephemeralPrivateKey, token, recipientAddress, originalAmountRaw);
     } catch (e) {
-      // Sweep failure is non-fatal for token payments — the UTXO was already
-      // withdrawn successfully. Log the failure but let the claim complete.
-      // For SOL payments the sweep IS the delivery, so re-throw.
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[claimPaymentLink] sweep failed:", msg);
       if (token === "SOL") throw new Error(`Sweep failed: ${msg}`);
     }
 
-    // Prefer the finalized callback signature; fall back to queue signature
-    const signature =
-      withdrawResult.callbackSignature?.toString() ??
-      withdrawResult.queueSignature.toString();
+    const signature = withdrawResult?.callbackSignature?.toString() ?? 
+                      withdrawResult?.queueSignature.toString() ?? 
+                      "recovered";
 
     // Mark link as claimed in DB.
     // The server requires a wallet signature for ALL claims (open + locked) to
@@ -2411,9 +2369,21 @@ async function sweepEphemeral(
   recipientAddress: string,
   originalAmountRaw: bigint
 ): Promise<void> {
-  const _overageAddr = process.env.NEXT_PUBLIC_OVERAGE_WALLET;
-  if (!_overageAddr) throw new Error("NEXT_PUBLIC_OVERAGE_WALLET env var is not set.");
-  const OVERAGE_WALLET = new PublicKey(_overageAddr);
+  // Primary source: Server API
+  // Fallback: Environment variable
+  let overageAddr = process.env.NEXT_PUBLIC_OVERAGE_WALLET;
+  try {
+    const res = await fetch("/api/overage-wallet");
+    if (res.ok) {
+      const data = await res.json();
+      if (data.address) overageAddr = data.address;
+    }
+  } catch (e) {
+    console.warn("[sweep] Failed to fetch overage wallet from API, using env fallback:", e);
+  }
+
+  if (!overageAddr) throw new Error("Overage wallet not configured (missing in API and ENV).");
+  const OVERAGE_WALLET = new PublicKey(overageAddr);
 
   const connection = new Connection(RPC_URL, "confirmed");
   const ephemeralKeypair = Keypair.fromSeed(
@@ -2438,22 +2408,30 @@ async function sweepEphemeral(
     const ephemeralAta = getAssociatedTokenAddressSync(mintPubkey, ephemeralPubkey, true);
     const recipientAta = getAssociatedTokenAddressSync(mintPubkey, recipientPubkey, true);
 
-    // Poll up to 30 times (90 seconds) for the tokens to arrive
-    for (let i = 0; i < 30; i++) {
+    console.log(`[sweep] Waiting for Arcium callback to fund ephemeral ATA: ${ephemeralAta.toString()}`);
+
+    console.log(`[sweep] Waiting for Arcium callback to fund ephemeral ATA: ${ephemeralAta.toString()}`);
+
+    // Poll up to 60 times (180 seconds) for the tokens to arrive.
+    // Arcium callbacks on mainnet can sometimes take 1-2 minutes.
+    for (let i = 0; i < 60; i++) {
       try {
         const balanceInfo = await connection.getTokenAccountBalance(ephemeralAta, "confirmed");
         tokenBalance = BigInt(balanceInfo.value.amount);
         if (tokenBalance > 0n) {
-          console.log(`[sweep] Found ${tokenBalance} tokens in ATA after ${i * 3}s`);
+          console.log(`[sweep] ✅ Found ${tokenBalance} tokens in ATA after ${i * 3}s`);
           break;
         }
-      } catch {
-        // ATA might not exist or balance is 0
+      } catch (e: any) {
+        // "could not find account" is expected if the Arcium callback hasn't fired yet
+        if (i % 5 === 0) console.log(`[sweep] Ephemeral ATA not yet funded (poll ${i})...`);
       }
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 3000));
     }
 
-    if (tokenBalance > 0n) {
+    if (tokenBalance === 0n) {
+      console.warn(`[sweep] ⚠️ Tokens never arrived in ephemeral ATA after 180s. Proceeding with SOL sweep only.`);
+    } else {
       tx.add(
         createAssociatedTokenAccountIdempotentInstruction(
           ephemeralPubkey, // payer
@@ -2477,18 +2455,23 @@ async function sweepEphemeral(
   }
 
   // Next, sweep all remaining SOL
-  let solBalance = initialSolBalance;
-  for (let i = 0; i < 30; i++) {
+  let solBalance = 0;
+  console.log(`[sweep] Checking SOL balance for: ${ephemeralPubkey.toString()}`);
+
+  for (let i = 0; i < 20; i++) {
     solBalance = await connection.getBalance(ephemeralPubkey, "confirmed");
     // If it's a SOL link, wait for balance to significantly increase vs initial
-    if (token === "SOL" && solBalance > initialSolBalance + 1000000) {
-      console.log(`[sweep] Found incoming SOL after ${i * 1}s (balance: ${solBalance})`);
+    // The initial sol balance was the rent buffer (~0.018 SOL). 
+    // We expect it to jump by the originalAmountRaw.
+    if (token === "SOL" && BigInt(solBalance) > BigInt(initialSolBalance) + 5000000n) {
+      console.log(`[sweep] ✅ Found incoming SOL (balance: ${solBalance / 1e9} SOL)`);
       break;
     }
-    // If it's a token link, we just sweep the rent, but we already waited for the token ATA above
+    // For token links, we don't need to wait for SOL (it's just the rent being returned)
     if (token !== "SOL") break;
     
-    await new Promise(r => setTimeout(r, 1000));
+    if (i % 5 === 0) process.stdout.write(".");
+    await new Promise(r => setTimeout(r, 2000));
   }
 
   const { blockhash } = await connection.getLatestBlockhash("confirmed");

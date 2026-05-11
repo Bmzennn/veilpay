@@ -97,6 +97,9 @@ export default function ClaimPage() {
     if (parsedMemo) setMemo(parsedMemo);
   }, []);
 
+  const [isResuming, setIsResuming] = useState(false);
+  const [isStuckSweep, setIsStuckSweep] = useState(false);
+
   useEffect(() => {
     if (!claimSecret) return;
     let cancelled = false;
@@ -106,7 +109,19 @@ export default function ClaimPage() {
         setStatusMsg("Scanning shielded pool…");
         const result = await scanForUtxo(claimSecret, token, { maxAttempts: 15, retryDelayMs: 4000 });
         if (cancelled) return;
-        if (!result.hasUtxo) { setError("No unclaimed payment found for this link."); setStep("preview"); return; }
+        
+        if (!result.hasUtxo && !result.hasEncryptedBalance && !result.hasPublicBalance) {
+          setError("No unclaimed payment found for this link.");
+          setStep("preview");
+          return;
+        }
+
+        if (result.hasEncryptedBalance) {
+          setIsResuming(true);
+        } else if (result.hasPublicBalance) {
+          setIsStuckSweep(true);
+        }
+
         setAmount(result.amountHuman);
         setToken(result.token);
         setStep("preview");
@@ -275,7 +290,9 @@ export default function ClaimPage() {
 
                   <div style={{ padding: "16px 0", borderTop: "1px solid var(--hairline)", marginBottom: 20 }}>
                     <div className="field-label" style={{ marginBottom: 6 }}>Status</div>
-                    <p style={{ fontSize: 14, color: "var(--ink-2)" }}>Waiting in VeilPay&apos;s shielded pool</p>
+                    <p style={{ fontSize: 14, color: "var(--ink-2)" }}>
+                      {isStuckSweep ? "Withdrawn to gateway · Ready for final delivery" : isResuming ? "Claimed into private vault · Ready to withdraw" : "Waiting in VeilPay's shielded pool"}
+                    </p>
                   </div>
 
                   {lockedTo && (
@@ -307,7 +324,7 @@ export default function ClaimPage() {
                       disabled={walletMismatch}
                       onClick={handleClaim}
                     >
-                      <Shield size={16} /> Claim
+                      <Shield size={16} /> {isStuckSweep ? "Deliver Funds" : isResuming ? "Sweep Funds" : "Claim"}
                     </button>
                   ) : (
                     <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
