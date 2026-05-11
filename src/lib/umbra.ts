@@ -2157,7 +2157,9 @@ export async function claimPaymentLink({
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[claimPaymentLink] sweep failed:", msg);
-      if (token === "SOL") throw new Error(`Sweep failed: ${msg}`);
+      // ALWAYS throw on sweep failure. If the money isn't in the user's wallet,
+      // the claim is NOT complete. They can use the "Resume" logic to try again.
+      throw new Error(`Delivery failed: ${msg}`);
     }
 
     const signature = withdrawResult?.callbackSignature?.toString() ?? 
@@ -2411,8 +2413,6 @@ async function sweepEphemeral(
 
     console.log(`[sweep] Waiting for Arcium callback to fund ephemeral ATA: ${ephemeralAta.toString()}`);
 
-    console.log(`[sweep] Waiting for Arcium callback to fund ephemeral ATA: ${ephemeralAta.toString()}`);
-
     // Poll up to 60 times (180 seconds) for the tokens to arrive.
     // Arcium callbacks on mainnet can sometimes take 1-2 minutes.
     for (let i = 0; i < 60; i++) {
@@ -2431,7 +2431,7 @@ async function sweepEphemeral(
     }
 
     if (tokenBalance === 0n) {
-      console.warn(`[sweep] ⚠️ Tokens never arrived in ephemeral ATA after 180s. Proceeding with SOL sweep only.`);
+      throw new Error(`Funds never arrived in gateway wallet after 180s. Please wait a minute and try clicking Resume.`);
     } else {
       tx.add(
         createAssociatedTokenAccountIdempotentInstruction(
@@ -2459,20 +2459,27 @@ async function sweepEphemeral(
   let solBalance = 0;
   console.log(`[sweep] Checking SOL balance for: ${ephemeralPubkey.toString()}`);
 
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 30; i++) {
     solBalance = await connection.getBalance(ephemeralPubkey, "confirmed");
-    // If it's a SOL link, wait for balance to significantly increase vs initial
+    // If it's a SOL link, wait for balance to be at least the original amount.
     // The initial sol balance was the rent buffer (~0.018 SOL). 
-    // We expect it to jump by the originalAmountRaw.
-    if (token === "SOL" && BigInt(solBalance) > BigInt(initialSolBalance) + 5000000n) {
-      console.log(`[sweep] ✅ Found incoming SOL (balance: ${solBalance / 1e9} SOL)`);
-      break;
+    // We expect it to be initial + original.
+    if (token === "SOL") {
+      if (BigInt(solBalance) >= originalAmountRaw) {
+        console.log(`[sweep] ✅ Found SOL (balance: ${solBalance / 1e9} SOL)`);
+        break;
+      }
+    } else {
+      // For token links, we just need whatever is left (the buffer)
+      if (solBalance > 0) break;
     }
-    // For token links, we don't need to wait for SOL (it's just the rent being returned)
-    if (token !== "SOL") break;
     
-    if (i % 5 === 0) console.log("[sweep] Waiting for SOL balance update...");
+    if (i % 5 === 0) console.log(`[sweep] Waiting for SOL arrival (attempt ${i})...`);
     await new Promise(r => setTimeout(r, 2000));
+  }
+
+  if (token === "SOL" && BigInt(solBalance) < originalAmountRaw) {
+    throw new Error(`SOL never arrived in gateway wallet. Current balance: ${solBalance / 1e9} SOL. Needed: ${Number(originalAmountRaw) / 1e9} SOL.`);
   }
 
   const { blockhash } = await connection.getLatestBlockhash("confirmed");
@@ -2543,7 +2550,7 @@ async function sweepEphemeral(
 
       // Poll for confirmation — no WebSocket dependency
       let confirmed = false;
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 45; i++) {
         await new Promise(r => setTimeout(r, 2000));
         const status = await connection.getSignatureStatus(sweepSig, { searchTransactionHistory: false });
         const conf = status.value?.confirmationStatus;
@@ -2553,11 +2560,11 @@ async function sweepEphemeral(
           break;
         }
         if (status.value?.err) {
-          throw new Error(`Sweep transaction failed on-chain: ${JSON.stringify(status.value.err)}`);
+          throw new Error(`Delivery transaction failed on-chain: ${JSON.stringify(status.value.err)}`);
         }
       }
       if (!confirmed) {
-        console.warn(`[sweep] sweep tx not confirmed after 60s — sig: ${sweepSig}`);
+        throw new Error(`Delivery transaction timed out after 90s. Sig: ${sweepSig}`);
       }
     }
   } catch (e) {
