@@ -286,7 +286,8 @@ function getPersistentZkAssetProvider(): IZkAssetProvider {
 
       if (!rawUrl) throw new Error(`Could not resolve URL for ZK asset '${type}' (variant: ${variant})`);
 
-      const fullZkeyUrl = rawUrl.startsWith("http") ? rawUrl : `${CDN_BASE}/${rawUrl}`;
+      const urlString = rawUrl as string;
+      const fullZkeyUrl = urlString.startsWith("http") ? urlString : `${CDN_BASE}/${urlString}`;
       const fullWasmUrl = fullZkeyUrl.replace(/\.zkey$/i, ".wasm");
 
       const [zkeyUrl, wasmUrl] = await Promise.all([
@@ -2536,7 +2537,7 @@ async function sweepEphemeral(
     let overageSol = 0n;
     
     // Safety thresholds
-    const RENT_SAFETY_BUFFER = 2000000n; // 0.002 SOL (well above 0.00089 rent exempt min)
+    const RENT_SAFETY_BUFFER = 5000000n; // 0.005 SOL (covers gateway rent + recipient ATA rent)
     const NETWORK_FEE_BUFFER = 10000n;   // 0.00001 SOL
     
     const availableAfterSafety = BigInt(solBalance) - RENT_SAFETY_BUFFER - NETWORK_FEE_BUFFER;
