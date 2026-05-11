@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { BackgroundStage } from "@/components/BackgroundStage";
 import { VPLogo } from "@/components/AppShell";
-import { Sun, Moon, Shield, Link2, EyeOff, Zap, Key, ArrowRight, Menu, X } from "lucide-react";
+import { Sun, Moon, Shield, Link2, EyeOff, Zap, Gift, ArrowRight, Menu, X } from "lucide-react";
 
 // ─── Custom VeilPay SVG icons ─────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ function Nav() {
 
   const links = [
     { label: "Features", href: "#features" },
-    { label: "Audit",    href: "/audit" },
+    { label: "Gift Cards", href: "/gift" },
     { label: "Docs",     href: "/docs" },
   ];
 
@@ -120,7 +120,7 @@ function Nav() {
             </a>
           ))}
           <div style={{ padding: "8px 8px 4px", borderTop: "0.5px solid var(--hairline)", marginTop: 4 }}>
-            <a className="btn btn-primary btn-sm" href="/create" style={{ width: "100%", justifyContent: "center" }}>
+            <a className="btn btn-primary btn-sm" href="/dashboard" style={{ width: "100%", justifyContent: "center" }}>
               Get started <ArrowRight size={14} />
             </a>
           </div>
@@ -262,9 +262,9 @@ const FEATURES = [
     body: "Pay for API access privately — the server never learns who paid.",
   },
   {
-    icon: <Key size={20} />,
-    title: "Viewing keys",
-    body: "Authorised auditors selectively inspect activity. Privacy stays intact.",
+    icon: <Gift size={20} />,
+    title: "Private gift cards",
+    body: "Send crypto as a physical or digital gift card. Recipient claims unlinkably.",
   },
 ];
 
@@ -309,7 +309,7 @@ export default function LandingPage() {
             {/* ── Two persona cards ── */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, maxWidth: 760, margin: "0 auto 32px" }}>
               {/* Send card */}
-              <a href="/create" style={{ textDecoration: "none" }}>
+              <a href="/dashboard" style={{ textDecoration: "none" }}>
                 <div className="glass reveal in" style={{
                   padding: "32px 28px", borderRadius: 24,
                   border: "0.5px solid rgba(0,179,255,.25)",
@@ -408,9 +408,9 @@ export default function LandingPage() {
                 <span className="footer-tag" style={{ marginLeft: 8 }}>Private payments, zero traces.</span>
               </div>
               <div className="footer-links">
-                <a href="/create">App</a>
+                <a href="/dashboard">App</a>
                 <a href="/docs">Docs</a>
-                <a href="/audit">Audit</a>
+                <a href="/gift">Gift Cards</a>
                 <span style={{ opacity: 0.5 }}>Built on Umbra Protocol</span>
               </div>
               <div style={{ display: "flex", gap: 10, color: "var(--ink-3)" }}>

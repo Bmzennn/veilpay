@@ -784,39 +784,75 @@ const x402 = createX402({ …, replayStore: new RedisReplayStore(redis) });`} />
 
           {/* ── Agent Skill ── */}
           <SH id="skill" tag="SDK & Integrations">VeilPay Agent Skill</SH>
-          <P>The VeilPay agent skill lets AI agents create and claim private payment links fully autonomously — no browser, no wallet popup. The agent signs transactions with its own stored keypair. ZK proofs run locally in Node.js.</P>
+          <P>The VeilPay agent skill lets AI agents create and claim private payment links, perform confidential transfers, and handle x402 payments fully autonomously — no browser, no wallet popup. The agent signs transactions with its own stored keypair. ZK proofs run locally in Node.js.</P>
 
-          <H3>Install</H3>
-          <Code lang="bash" code={`npx skills add Bmzennn/agent-skills@veilpay`} />
+          <H3>Installation</H3>
+          <Note>The agent skill is part of the <IC c="agent-skills" /> repository. It requires <IC c="snarkjs" /> and specific peer dependencies to compute ZK proofs locally.</Note>
+          <Code lang="bash" code={`# Install the skill into your agent's workspace
+npx skills add Bmzennn/agent-skills@veilpay
 
-          <H3>Agent setup</H3>
-          <Code lang="bash" code={`node scripts/wallet.cjs create    # generate wallet → ~/.veilpay/wallet.json
-node scripts/wallet.cjs balance   # check mainnet SOL balance`} />
+# Install peer dependencies (required for local ZK proofs)
+npm install --legacy-peer-deps`} />
 
-          <H3>Create a payment link</H3>
-          <Code lang="bash" code={`node scripts/create-link.cjs --amount 1.5 --token SOL --network mainnet`} />
-          <Code lang="text" code={`[1/4] Generating ephemeral keypair…
-[2/4] Funding ephemeral…
-[3/4] Registering privacy channels (ZK proofs)…
-[4/4] Depositing into shielded pool…
+          <H3>1. Wallet & Balance Management</H3>
+          <P>Agents manage their own Solana keypair and query both public and encrypted balances.</P>
+          <Code lang="bash" code={`# Generate a new agent wallet
+node scripts/wallet.cjs create
 
-✅ Link: https://veilpay.xyz/claim?lid=…#<secret>:SOL
-   Amount: 1.5 SOL  |  Expires: 7 days`} />
+# Show public SOL and token balances
+node scripts/wallet.cjs balance
 
-          <H3>Claim a link</H3>
-          <Code lang="bash" code={`node scripts/claim-link.cjs --link "https://veilpay.xyz/claim?lid=…#<secret>:SOL"`} />
-          <Code lang="text" code={`[1/5] Scanning pool… Found 1.5 SOL
-[2/5] Generating ZK proof (~20–60s, cached after first run)…
-[3/5] On-chain ZK verification… ✓
-[4/5] Preparing token account…
-[5/5] Withdrawing to wallet…
+# Show shielded (encrypted) balances in the Umbra pool
+node scripts/balance.cjs`} />
 
-✅ Claimed: 1.5 SOL → 7xKt…9mPq`} />
-          <Note>ZK circuit files (~100 MB) are cached at <IC c="~/.veilpay/zk-cache/" /> after the first claim. Subsequent claims skip the download.</Note>
+          <H3>2. Private Payment Links</H3>
+          <P>Generate or claim shareable URLs that encode an ephemeral claim key.</P>
+          <Code lang="bash" code={`# Create a 1.5 SOL private link
+node scripts/create-link.cjs --amount 1.5 --token SOL
 
-          <H3>Why no browser required</H3>
-          <P>The browser version uses Phantom for signing because browsers cannot safely hold raw private keys. An agent has no such constraint — it uses <IC c="createSignerFromPrivateKeyBytes" /> from the Umbra SDK directly. The ZK prover runs in Node.js with local circuit files, producing identical proofs to the browser version.</P>
-          <Warn>Store the agent wallet with <IC c="chmod 600 ~/.veilpay/wallet.json" />. Never commit it to version control.</Warn>
+# Claim a link into the agent's wallet (runs local ZK proof)
+node scripts/claim-link.cjs --link "https://veilpayments.xyz/claim?lid=…#<secret>:SOL"`} />
+
+          <H3>3. Confidential Transfers</H3>
+          <P>Send tokens directly to a recipient&apos;s encrypted balance. The amount is hidden on-chain via Arcium MPC.</P>
+          <Code lang="bash" code={`# Send 100 USDC confidentially to a recipient address
+node scripts/transfer.cjs --to <address> --amount 100 --token USDC`} />
+          <Note>The recipient must have connected to VeilPay at least once to initialize their encryption keys.</Note>
+
+          <H3>4. Shielding & Withdrawals</H3>
+          <P>Move funds between the agent&apos;s public wallet and its private shielded balance.</P>
+          <Code lang="bash" code={`# Withdraw 0.5 SOL from encrypted balance to public wallet
+node scripts/withdraw.cjs --token SOL --amount 0.5
+
+# Withdraw ALL USDC to public wallet
+node scripts/withdraw.cjs --token USDC --all`} />
+
+          <H3>5. x402 & Premium Data</H3>
+          <P>Fulfill x402 "Payment Required" challenges to access premium API endpoints or content.</P>
+          <Code lang="bash" code={`# Fulfill a specific x402 invoice
+node scripts/pay-invoice.cjs '<invoice_json>'
+
+# Fetch premium table data (automatically handles x402 payment flow)
+node scripts/premium.cjs --table links
+node scripts/premium.cjs --table payments`} />
+
+          <H3>6. Utilities & Auditing</H3>
+          <P>Tools for checking link status and auditing the agent&apos;s payment history.</P>
+          <Code lang="bash" code={`# Check if a link is still active or already claimed
+node scripts/check-link.cjs --link "<url>"
+
+# List all x402 payments made by the agent
+node scripts/list-payments.cjs
+
+# Recover a stuck payment proof
+node scripts/recover-payment.cjs --sig <tx_signature>`} />
+
+          <H3>Security & Performance</H3>
+          <UL items={[
+            <><strong>Local Proving</strong> — ZK proofs (~100MB circuit files) are computed locally in Node.js. Files are cached at <IC c="~/.veilpay/zk-cache/" />.</>,
+            <><strong>Key Protection</strong> — Store the agent wallet with <IC c="chmod 600 ~/.veilpay/wallet.json" />. Never commit it to version control.</>,
+            <><strong>Double-Spend Prevention</strong> — <IC c="pay-invoice.cjs" /> caches successful payments in a local ledger to prevent paying the same invoice twice.</>,
+          ]} />
 
           {/* ── Security Model ── */}
           <SH id="security" tag="Security">Security Model</SH>

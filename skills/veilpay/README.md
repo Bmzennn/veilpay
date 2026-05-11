@@ -86,7 +86,7 @@ node scripts/claim-link.cjs --link "<url>" --network mainnet
 
 Funds are swept to the agent wallet. Leftover SOL from the ephemeral channel is swept to the configured overage wallet.
 
-### Confidential transfer (direct send)
+### Confidential transfer
 
 Send directly to a registered VeilPay address. The amount is hidden on-chain.
 

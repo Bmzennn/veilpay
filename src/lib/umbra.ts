@@ -1476,8 +1476,11 @@ export function parseClaimHash(hash: string): {
   const claimSecret = stripped.slice(0, firstColon);
   const rest = stripped.slice(firstColon + 1);
   const secondColon = rest.indexOf(":");
-  const tokenStr = secondColon === -1 ? rest : rest.slice(0, secondColon);
-  const token: Token = tokenStr === "SOL" || tokenStr === "USDC" ? tokenStr : "USDC";
+  const tokenStr = (secondColon === -1 ? rest : rest.slice(0, secondColon)).toUpperCase();
+  
+  // Support all tokens in TOKEN_CONFIG
+  const token: Token = (tokenStr in TOKEN_CONFIG) ? (tokenStr as Token) : "USDC";
+
   let memo: string | undefined;
   if (secondColon !== -1) {
     try {

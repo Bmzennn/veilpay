@@ -6,6 +6,7 @@ import { PublicKey } from "@solana/web3.js";
 import { AppShell } from "@/components/AppShell";
 import { ConnectWalletButton } from "@/components/WalletModal";
 import { useWalletContext } from "@/components/WalletContext";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   createPaymentLink, confidentialTransfer, validateAmount, preloadCreateAssets,
   getStrandedEphemerals, recoverStrandedEphemeral, type StrandedEphemeral,
@@ -30,7 +31,7 @@ function VPPrivateLinkIcon({ size = 18 }: { size?: number }) {
   );
 }
 
-function VPDirectSendIcon({ size = 18 }: { size?: number }) {
+function VPConfidentialTransferIcon({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 2.5L14.5 5V8.5c0 3-2 5-5.5 6.5C3 14 1 12 1 8.5V5L9 2.5z" />
@@ -63,8 +64,6 @@ const TOKEN_LOGOS: Record<Token, string> = {
 };
 
 // ─── Token selector ───────────────────────────────────────────────────────────
-// Dropdown is portaled to document.body to escape any parent backdrop-filter
-// stacking context (same root cause as WalletModal clipping inside the nav).
 
 function TokenPicker({ value, onChange }: { value: Token; onChange: (t: Token) => void }) {
   const [open, setOpen] = useState(false);
@@ -149,97 +148,6 @@ function TokenPicker({ value, onChange }: { value: Token; onChange: (t: Token) =
   );
 }
 
-// ─── Mode selector ────────────────────────────────────────────────────────────
-
-interface ModeSelectorProps {
-  value: TransferType;
-  onChange: (m: TransferType) => void;
-}
-
-function ModeSelector({ value, onChange }: ModeSelectorProps) {
-  const options: {
-    id: TransferType;
-    icon: React.ReactNode;
-    title: string;
-    desc: string;
-    accent: string;
-    accentRgb: string;
-  }[] = [
-    {
-      id: "link",
-      icon: <VPPrivateLinkIcon size={18} />,
-      title: "Private Link",
-      desc: "Anyone with the link can claim to a fresh wallet. Sender stays anonymous.",
-      accent: "var(--vp-sky-deep)",
-      accentRgb: "0,128,255",
-    },
-    {
-      id: "confidential",
-      icon: <VPDirectSendIcon size={18} />,
-      title: "Direct Send",
-      desc: "Send straight to a VeilPay address. Amount is hidden on-chain.",
-      accent: "var(--vp-violet)",
-      accentRgb: "107,124,255",
-    },
-    {
-      id: "gift",
-      icon: <VPGiftCardIcon size={18} />,
-      title: "Gift Card",
-      desc: "Send a private gift — recipient claims into their own wallet.",
-      accent: "#d97706",
-      accentRgb: "217,119,6",
-    },
-  ];
-
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
-      {options.map((o) => {
-        const active = value === o.id;
-        return (
-          <button
-            key={o.id}
-            onClick={() => onChange(o.id)}
-            style={{
-              padding: "18px 18px 16px",
-              borderRadius: "var(--radius-md)",
-              border: active
-                ? `1px solid rgba(${o.accentRgb},0.4)`
-                : "0.5px solid var(--hairline-strong)",
-              background: active
-                ? `rgba(${o.accentRgb},0.07)`
-                : "var(--glass-bg-soft)",
-              textAlign: "left",
-              transition: "background 0.18s, border-color 0.18s",
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-              cursor: "pointer",
-            }}
-          >
-            <div style={{
-              width: 34, height: 34, borderRadius: 10, display: "grid", placeItems: "center",
-              background: active ? `rgba(${o.accentRgb},0.15)` : "var(--glass-bg-strong)",
-              color: active ? o.accent : "var(--ink-3)",
-              transition: "background 0.18s, color 0.18s",
-              border: "0.5px solid var(--hairline)",
-            }}>
-              {o.icon}
-            </div>
-            <div>
-              <p style={{ margin: "0 0 3px", fontWeight: 600, fontSize: 14, color: "var(--ink)", letterSpacing: "-0.01em" }}>
-                {o.title}
-              </p>
-              <p style={{ margin: 0, fontSize: 12, color: "var(--ink-3)", lineHeight: 1.5 }}>
-                {o.desc}
-              </p>
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 // ─── Link display with blur/reveal ───────────────────────────────────────────
 
 function SecureLink({ link }: { link: string }) {
@@ -290,15 +198,10 @@ function SecureLink({ link }: { link: string }) {
   const toggleQr = async () => {
     if (showQr) { setShowQr(false); return; }
     if (!qrDataUrl) {
-      // Dynamic import — QR generated entirely client-side, secret never leaves browser.
       const QRCode = (await import("qrcode")).default;
-      
-      // Wrap the link in Phantom's deep link to open its inbuilt browser on mobile
       const phantomLink = `https://phantom.app/ul/browse/${encodeURIComponent(link)}?ref=${encodeURIComponent(window.location.origin)}`;
-      
       const url = await QRCode.toDataURL(phantomLink, {
         width: 220, margin: 2,
-        // VP sky blue dots on dark navy — matches the UI in both light and dark mode
         color: { dark: "#00b3ff", light: "#06111f" },
       });
       setQrDataUrl(url);
@@ -319,7 +222,6 @@ function SecureLink({ link }: { link: string }) {
         </div>
       )}
 
-      {/* Full link — blurred until revealed so shoulder-surfers can't read the key */}
       <div style={{
         padding: "14px 16px",
         borderRadius: "var(--radius-sm)",
@@ -340,7 +242,6 @@ function SecureLink({ link }: { link: string }) {
         </div>
       </div>
 
-      {/* Reveal / Copy row */}
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         <button className="btn btn-glass btn-sm" onClick={reveal} style={{ flex: 1, justifyContent: "center" }}>
           {revealed
@@ -352,7 +253,6 @@ function SecureLink({ link }: { link: string }) {
         </button>
       </div>
 
-      {/* Action buttons */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {navigator?.share && (
           <button className="btn btn-glass btn-sm" onClick={() => navigator.share({ title: "VeilPay payment", url: link })}>
@@ -367,7 +267,6 @@ function SecureLink({ link }: { link: string }) {
         </a>
       </div>
 
-      {/* QR code — VP sky blue on dark navy, on-brand */}
       {showQr && qrDataUrl && (
         <div style={{
           display: "flex", flexDirection: "column", alignItems: "center",
@@ -400,7 +299,6 @@ export default function CreatePage() {
   const { connected, wallet, account } = useWalletContext();
   useEffect(() => { preloadCreateAssets(); }, []);
 
-  // ── Stranded ephemeral recovery ───────────────────────────────────────────
   const [stranded, setStranded] = useState<StrandedEphemeral[]>([]);
   const [recoveringAddr, setRecoveringAddr] = useState<string | null>(null);
   const [recoveryStatus, setRecoveryStatus] = useState("");
@@ -434,7 +332,7 @@ export default function CreatePage() {
   const [generatedUrl, setGeneratedUrl] = useState("");
   const [meta, setMeta] = useState<PaymentLinkMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [progressStep, setProgressStep] = useState(1); // 1–5 for link flow
+  const [progressStep, setProgressStep] = useState(1);
 
   // Confidential state
   const [confStep, setConfStep] = useState<ConfidentialStep>("input");
@@ -442,7 +340,7 @@ export default function CreatePage() {
   const [confAmount, setConfAmount] = useState("");
   const [confToken, setConfToken] = useState<Token>("SOL");
   const [confStatusMsg, setConfStatusMsg] = useState("");
-  const [confProgressStep, setConfProgressStep] = useState(1); // 1–3 for conf flow
+  const [confProgressStep, setConfProgressStep] = useState(1);
   const [confTxSig, setConfTxSig] = useState("");
   const [confError, setConfError] = useState<string | null>(null);
 
@@ -469,14 +367,6 @@ export default function CreatePage() {
         token,
         onStatusChange: (msg) => {
           setStatusMsg(msg);
-          // 7-step mapping — each fires on a precise umbra.ts onStatusChange message:
-          // 1 → Funding            (wallet sig 1 — SOL transfer)
-          // 2 → Channel setup      (ephemeral ZK registration, no wallet)
-          // 3 → Verifying account  (sender check — fires for ALL users)
-          // 4 → Account setup      (wallet sigs 2–4 if first time, instant if returning)
-          // 5 → Computing proof    (ZK generation ~30s, no wallet)
-          // 6 → Depositing         (fires from onProofComputation.post — 2 wallet sigs follow)
-          // 7 → Confirmed          (fires after BOTH deposit txs confirm — truly done)
           if (msg.includes("Funding")) setProgressStep(1);
           else if (msg.includes("Registering privacy") || msg.includes("Registering ephemeral")) setProgressStep(2);
           else if (msg.includes("Verifying sender")) setProgressStep(3);
@@ -484,7 +374,6 @@ export default function CreatePage() {
           else if (msg.includes("Computing deposit proof")) setProgressStep(5);
           else if (msg.includes("Depositing") || msg.includes("shielded")) setProgressStep(6);
           else if (msg.includes("Deposit confirmed")) setProgressStep(7);
-          // Coarse step for isProcessing logic
           if (msg.includes("Registering") || msg.includes("Verifying")) setStep("registering");
           if (msg.includes("Depositing") || msg.includes("Computing") || msg.includes("Deposit confirmed")) setStep("creating");
         },
@@ -497,7 +386,6 @@ export default function CreatePage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setStep("input");
-      // Refresh stranded list — the ephemeral key was saved during the attempt
       setStranded(getStrandedEphemerals());
     }
   };
@@ -545,13 +433,30 @@ export default function CreatePage() {
     { label: "Encrypting",   hint: "Sending via Arcium MPC" },
   ];
 
+  const modeOptions: {
+    id: TransferType;
+    title: string;
+  }[] = [
+    {
+      id: "link",
+      title: "Private Link",
+    },
+    {
+      id: "confidential",
+      title: "Confidential Transfer",
+    },
+    {
+      id: "gift",
+      title: "Gift Card",
+    },
+  ];
+
   return (
     <AppShell active="create">
-
       {/* ── Stranded ephemeral recovery banner ── */}
       {stranded.length > 0 && (
         <div style={{ background: "rgba(245,158,11,0.10)", borderBottom: "0.5px solid rgba(245,158,11,0.30)", padding: "12px 24px" }}>
-          <div className="container" style={{ maxWidth: 560 }}>
+          <div className="container" style={{ maxWidth: 860 }}>
             {stranded.map((entry) => (
               <div key={entry.address} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <AlertTriangle size={15} style={{ color: "#f59e0b", flexShrink: 0 }} />
@@ -561,11 +466,7 @@ export default function CreatePage() {
                 {recoveringAddr === entry.address ? (
                   <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{recoveryStatus}</span>
                 ) : (
-                  <button
-                    className="btn btn-glass btn-sm"
-                    style={{ fontSize: 12, color: "#f59e0b", borderColor: "rgba(245,158,11,0.35)" }}
-                    onClick={() => handleRecover(entry)}
-                  >
+                  <button className="btn btn-glass btn-sm" style={{ fontSize: 12, color: "#f59e0b", borderColor: "rgba(245,158,11,0.35)" }} onClick={() => handleRecover(entry)}>
                     Recover SOL →
                   </button>
                 )}
@@ -576,7 +477,7 @@ export default function CreatePage() {
       )}
 
       <section className="app-head">
-        <div className="container" style={{ maxWidth: 600, textAlign: "center" }}>
+        <div className="container" style={{ maxWidth: 860, textAlign: "center" }}>
           <span className="eyebrow" style={{ display: "inline-flex" }}>Send</span>
           <h1 className="h2" style={{ textAlign: "center" }}>Move money <em>privately.</em></h1>
           <p className="lead" style={{ textAlign: "center", margin: "0 auto" }}>
@@ -586,322 +487,252 @@ export default function CreatePage() {
       </section>
 
       <section className="app-section">
-        <div className="container" style={{ maxWidth: 560 }}>
-
-          {/* ── Mode selector (only when not mid-flow) ── */}
-          {step === "input" && confStep === "input" && (
-            <ModeSelector value={transferType} onChange={(m) => {
-              setTransferType(m);
-              setError(null);
-              setConfError(null);
-            }} />
-          )}
-
-          {/* ── Form card ── */}
-          <div className="card glass card-pad-lg reveal in">
-
-            {/* ── LINK FLOW ── */}
-            {transferType === "link" && (
-              <>
-                {step === "done" && meta ? (
-                  <div>
-                    <SecureLink link={generatedUrl} />
-                    <button
-                      className="btn btn-glass"
-                      style={{ marginTop: 16, width: "100%", justifyContent: "center" }}
-                      onClick={() => { setStep("input"); setAmount(""); setGeneratedUrl(""); setMeta(null); }}
+        <div className="container" style={{ maxWidth: 1200, position: "relative" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "240px 1fr 240px", gap: 20, alignItems: "flex-start" }}>
+            
+            {/* ── Sidebar Mode Selector ── */}
+            {step === "input" && confStep === "input" ? (
+              <aside style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {modeOptions.map((o) => {
+                  const active = transferType === o.id;
+                  return (
+                    <motion.button
+                      key={o.id}
+                      onClick={() => {
+                        setTransferType(o.id);
+                        setError(null);
+                        setConfError(null);
+                      }}
+                      animate={{
+                        scale: active ? 1.05 : 1,
+                        x: active ? 10 : 0,
+                        background: active ? "rgba(0,179,255,0.08)" : "transparent",
+                        borderColor: active ? "rgba(0,179,255,0.25)" : "transparent",
+                      }}
+                      transition={{ type: "spring", stiffness: 400, damping: 28 }}
+                      style={{
+                        padding: "14px 20px",
+                        borderRadius: 14,
+                        border: "1px solid transparent",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        color: active ? "var(--ink)" : "var(--ink-4)",
+                        fontWeight: active ? 700 : 500,
+                        fontSize: 14,
+                        letterSpacing: "-0.01em",
+                      }}
                     >
-                      <Plus size={14} /> Create another
-                    </button>
-                  </div>
-                ) : isProcessing ? (
-                  <div style={{ textAlign: "center", padding: "32px 0 20px" }}>
-                    {/* Logo */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 72, height: 72, objectFit: "contain", margin: "0 auto 20px", display: "block" }} />
+                      {o.title}
+                    </motion.button>
+                  );
+                })}
+              </aside>
+            ) : <div />}
 
-                    {/* Step label + fraction */}
-                    <p style={{ fontWeight: 600, fontSize: 18, margin: "0 0 4px", letterSpacing: "-0.02em" }}>
-                      {LINK_STEPS[progressStep - 1]?.label}
-                    </p>
-                    <p style={{ fontSize: 12, color: "var(--vp-sky-deep)", fontFamily: "var(--font-mono)", fontWeight: 600, margin: "0 0 18px", letterSpacing: "0.04em" }}>
-                      {Math.min(progressStep, LINK_STEPS.length)} / {LINK_STEPS.length}
-                    </p>
-
-                    {/* Segmented progress bar */}
-                    <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
-                      {LINK_STEPS.map((_, i) => {
-                        const s = i + 1;
-                        const done = s < progressStep;
-                        const active = s === progressStep;
-                        return (
-                          <div key={s} style={{
-                            flex: 1, height: 5, borderRadius: 3,
-                            background: done
-                              ? "linear-gradient(90deg,var(--vp-sky-deep),var(--vp-sky-2))"
-                              : active
-                              ? "var(--vp-sky)"
-                              : "var(--hairline-strong)",
-                            opacity: done ? 1 : active ? 1 : 0.3,
-                            animation: active ? "stepPulse 1.6s ease-in-out infinite" : "none",
-                            transition: "background 0.4s",
-                          }} />
-                        );
-                      })}
-                    </div>
-
-                    {/* Hint + status */}
-                    <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "0 0 4px" }}>
-                      {LINK_STEPS[progressStep - 1]?.hint}
-                    </p>
-                    <p style={{ fontSize: 12, color: "var(--ink-4)", margin: 0, fontFamily: "var(--font-mono)" }}>
-                      {statusMsg}
-                    </p>
-                  </div>
-                ) : (
+            {/* ── Form Content (Centered) ── */}
+            <div style={{ maxWidth: 460, margin: "0 auto", width: "100%" }}>
+              <div className="card glass card-pad-lg reveal in" style={{ width: "100%" }}>
+                {/* ── LINK FLOW ── */}
+                {transferType === "link" && (
                   <>
-                    {/* Link sub-mode */}
-                    <div style={{ marginBottom: 20 }}>
-                      <div className="field-label" style={{ marginBottom: 8 }}>Claim type</div>
-                      <div className="seg" style={{ alignSelf: "start" }}>
-                        <button className={mode === "general" ? "is-active" : ""} onClick={() => setMode("general")}>
-                          <Globe size={13} /> General
-                        </button>
-                        <button className={mode === "locked" ? "is-active" : ""} onClick={() => setMode("locked")}>
-                          <UserCheck size={13} /> Wallet-locked
+                    {step === "done" && meta ? (
+                      <div>
+                        <SecureLink link={generatedUrl} />
+                        <button className="btn btn-glass" style={{ marginTop: 16, width: "100%", justifyContent: "center" }} onClick={() => { setStep("input"); setAmount(""); setGeneratedUrl(""); setMeta(null); }}>
+                          <Plus size={14} /> Create another
                         </button>
                       </div>
-                      <p style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 8, marginBottom: 0 }}>
-                        {mode === "general"
-                          ? "Anyone with the link can claim. Both sender and recipient stay private."
-                          : "Only the specified wallet can claim. Sender stays private."}
-                      </p>
-                    </div>
-
-                    {/* Amount */}
-                    <div className="field" style={{ marginBottom: 4 }}>
-                      <div className="field-label">Amount</div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                        <input
-                          className="input input-amount"
-                          value={amount}
-                          onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-                          placeholder="0.00"
-                          inputMode="decimal"
-                        />
-                        <TokenPicker value={token} onChange={setToken} />
-                      </div>
-                      {amountError && amount && <p style={{ fontSize: 12, color: "#dc2626", marginTop: 4 }}>{amountError}</p>}
-                    </div>
-
-                    <div className="divider" />
-
-                    {/* Recipient lock */}
-                    {mode === "locked" && (
-                      <div className="field" style={{ marginBottom: 18 }}>
-                        <span className="field-label">Recipient address</span>
-                        <input
-                          className="input mono"
-                          value={recipientAddress}
-                          onChange={(e) => setRecipientAddress(e.target.value.trim())}
-                          placeholder="Solana wallet address…"
-                        />
-                        {recipientError && <p style={{ fontSize: 12, color: "#dc2626" }}>{recipientError}</p>}
-                      </div>
-                    )}
-
-                    {/* Expiry */}
-                    <div className="field" style={{ marginBottom: 20 }}>
-                      <span className="field-label">Expires in</span>
-                      <div className="seg" style={{ alignSelf: "start" }}>
-                        {["1", "7", "30"].map((d) => (
-                          <button key={d} className={expires === d ? "is-active" : ""} onClick={() => setExpires(d)}>{d}d</button>
-                        ))}
-                      </div>
-                      <span style={{ fontSize: 12, color: "var(--ink-3)" }}>Unclaimed funds return to your balance after expiry.</span>
-                    </div>
-
-                    {/* Optional memo — encoded in URL hash, never stored server-side */}
-                    <div className="field" style={{ marginBottom: 20 }}>
-                      <span className="field-label">Message to recipient <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(optional)</span></span>
-                      <input
-                        className="input"
-                        value={memo}
-                        onChange={(e) => setMemo(e.target.value.slice(0, 200))}
-                        placeholder="e.g. Invoice #42, coffee money, thanks!"
-                        maxLength={200}
-                      />
-                      <span style={{ fontSize: 11.5, color: "var(--ink-4)" }}>
-                        Encoded in the link — only the recipient sees it. Never stored on any server.
-                      </span>
-                    </div>
-
-                    {error && (
-                      <div style={{ display: "flex", gap: 8, padding: "10px 14px", borderRadius: "var(--radius-sm)", background: "rgba(220,38,38,0.08)", border: "0.5px solid rgba(220,38,38,0.2)", marginBottom: 16 }}>
-                        <AlertTriangle size={14} style={{ color: "#dc2626", flexShrink: 0, marginTop: 1 }} />
-                        <p style={{ fontSize: 13, color: "#dc2626", margin: 0 }}>{error}</p>
-                      </div>
-                    )}
-
-                    <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                      {connected ? (
-                        <button className="btn btn-primary" onClick={handleCreate} disabled={!canCreate} style={{ width: "100%", justifyContent: "center" }}>
-                          <Lock size={16} /> Create private link
-                        </button>
-                      ) : (
-                        <div style={{ width: "100%" }}>
-                          <ConnectWalletButton label="Connect Wallet to Create" variant="primary" />
+                    ) : isProcessing ? (
+                      <div style={{ textAlign: "center", padding: "32px 0 20px" }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 72, height: 72, objectFit: "contain", margin: "0 auto 20px", display: "block" }} />
+                        <p style={{ fontWeight: 600, fontSize: 18, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{LINK_STEPS[progressStep - 1]?.label}</p>
+                        <p style={{ fontSize: 12, color: "var(--vp-sky-deep)", fontFamily: "var(--font-mono)", fontWeight: 600, margin: "0 0 18px", letterSpacing: "0.04em" }}>{Math.min(progressStep, LINK_STEPS.length)} / {LINK_STEPS.length}</p>
+                        <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+                          {LINK_STEPS.map((_, i) => {
+                            const s = i + 1;
+                            const done = s < progressStep;
+                            const active = s === progressStep;
+                            return (
+                              <div key={s} style={{
+                                flex: 1, height: 5, borderRadius: 3,
+                                background: done ? "linear-gradient(90deg,var(--vp-sky-deep),var(--vp-sky-2))" : active ? "var(--vp-sky)" : "var(--hairline-strong)",
+                                opacity: done ? 1 : active ? 1 : 0.3,
+                                animation: active ? "stepPulse 1.6s ease-in-out infinite" : "none",
+                                transition: "background 0.4s",
+                              }} />
+                            );
+                          })}
                         </div>
-                      )}
-                    </div>
+                        <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "0 0 4px" }}>{LINK_STEPS[progressStep - 1]?.hint}</p>
+                        <p style={{ fontSize: 12, color: "var(--ink-4)", margin: 0, fontFamily: "var(--font-mono)" }}>{statusMsg}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ marginBottom: 20 }}>
+                          <div className="field-label" style={{ marginBottom: 8 }}>Claim type</div>
+                          <div className="seg" style={{ alignSelf: "start" }}>
+                            <button className={mode === "general" ? "is-active" : ""} onClick={() => setMode("general")}><Globe size={13} /> General</button>
+                            <button className={mode === "locked" ? "is-active" : ""} onClick={() => setMode("locked")}><UserCheck size={13} /> Wallet-locked</button>
+                          </div>
+                          <p style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 8, marginBottom: 0 }}>{mode === "general" ? "Anyone with the link can claim. Both sender and recipient stay private." : "Only the specified wallet can claim. Sender stays private."}</p>
+                        </div>
+                        <div className="field" style={{ marginBottom: 4 }}>
+                          <div className="field-label">Amount</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                            <input className="input input-amount" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0.00" inputMode="decimal" />
+                            <TokenPicker value={token} onChange={setToken} />
+                          </div>
+                          {amountError && amount && <p style={{ fontSize: 12, color: "#dc2626", marginTop: 4 }}>{amountError}</p>}
+                        </div>
+                        <div className="divider" />
+                        {mode === "locked" && (
+                          <div className="field" style={{ marginBottom: 18 }}>
+                            <span className="field-label">Recipient address</span>
+                            <input className="input mono" value={recipientAddress} onChange={(e) => setRecipientAddress(e.target.value.trim())} placeholder="Solana wallet address…" />
+                            {recipientError && <p style={{ fontSize: 12, color: "#dc2626" }}>{recipientError}</p>}
+                          </div>
+                        )}
+                        <div className="field" style={{ marginBottom: 20 }}>
+                          <span className="field-label">Expires in</span>
+                          <div className="seg" style={{ alignSelf: "start" }}>
+                            {["1", "7", "30"].map((d) => (
+                              <button key={d} className={expires === d ? "is-active" : ""} onClick={() => setExpires(d)}>{d}d</button>
+                            ))}
+                          </div>
+                          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>Unclaimed funds return to your balance after expiry.</span>
+                        </div>
+                        <div className="field" style={{ marginBottom: 20 }}>
+                          <span className="field-label">Message to recipient <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(optional)</span></span>
+                          <input className="input" value={memo} onChange={(e) => setMemo(e.target.value.slice(0, 200))} placeholder="e.g. Invoice #42, coffee money, thanks!" maxLength={200} />
+                          <span style={{ fontSize: 11.5, color: "var(--ink-4)" }}>Encoded in the link — only the recipient sees it. Never stored on any server.</span>
+                        </div>
+                        {error && (
+                          <div style={{ display: "flex", gap: 8, padding: "10px 14px", borderRadius: "var(--radius-sm)", background: "rgba(220,38,38,0.08)", border: "0.5px solid rgba(220,38,38,0.2)", marginBottom: 16 }}>
+                            <AlertTriangle size={14} style={{ color: "#dc2626", flexShrink: 0, marginTop: 1 }} />
+                            <p style={{ fontSize: 13, color: "#dc2626", margin: 0 }}>{error}</p>
+                          </div>
+                        )}
+                        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                          {connected ? (
+                            <button className="btn btn-primary" onClick={handleCreate} disabled={!canCreate} style={{ width: "100%", justifyContent: "center" }}>
+                              <Lock size={16} /> Create private link
+                            </button>
+                          ) : (
+                            <div style={{ width: "100%" }}>
+                              <ConnectWalletButton label="Connect Wallet to Create" variant="primary" />
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </>
                 )}
-              </>
-            )}
 
-            {/* ── GIFT CARD FLOW ── */}
-            {transferType === "gift" && (
-              <div className="card glass card-pad-lg reveal in" style={{ textAlign: "center" }}>
-                <div style={{ width: 60, height: 60, borderRadius: 18, background: "rgba(217,119,6,.12)", border: "0.5px solid rgba(217,119,6,.3)", display: "grid", placeItems: "center", margin: "0 auto 16px", color: "#d97706" }}>
-                  <VPGiftCardIcon size={26} />
-                </div>
-                <p style={{ fontWeight: 600, fontSize: 18, letterSpacing: "-0.02em", marginBottom: 8 }}>Create a private gift card</p>
-                <p style={{ color: "var(--ink-3)", fontSize: 14, marginBottom: 24, maxWidth: 320, margin: "0 auto 24px" }}>
-                  Gift cards have denomination presets, a personal message, and a downloadable card visual.
-                </p>
-                <a href="/gift" className="btn btn-primary" style={{ justifyContent: "center" }}>
-                  <VPGiftCardIcon size={15} /> Open Gift Card creator →
-                </a>
+                {/* ── GIFT CARD FLOW ── */}
+                {transferType === "gift" && (
+                  <div style={{ textAlign: "center", padding: "20px 0" }}>
+                    <div style={{ width: 60, height: 60, borderRadius: 18, background: "rgba(217,119,6,.12)", border: "0.5px solid rgba(217,119,6,.3)", display: "grid", placeItems: "center", margin: "0 auto 16px", color: "#d97706" }}>
+                      <VPGiftCardIcon size={26} />
+                    </div>
+                    <p style={{ fontWeight: 600, fontSize: 18, letterSpacing: "-0.02em", marginBottom: 8 }}>Create a private gift card</p>
+                    <p style={{ color: "var(--ink-3)", fontSize: 14, marginBottom: 24, maxWidth: 320, margin: "0 auto 24px" }}>
+                      Gift cards have denomination presets, a personal message, and a downloadable card visual.
+                    </p>
+                    <a href="/gift" className="btn btn-primary" style={{ justifyContent: "center" }}>
+                      <VPGiftCardIcon size={15} /> Open Gift Card creator →
+                    </a>
+                  </div>
+                )}
+
+                {/* ── CONFIDENTIAL FLOW ── */}
+                {transferType === "confidential" && (
+                  <>
+                    {confStep === "done" ? (
+                      <div style={{ textAlign: "center" }}>
+                        <div className="success-mark" style={{ marginInline: "auto" }}><Check size={24} /></div>
+                        <h2 className="card-title" style={{ fontSize: 22, marginTop: 14, textAlign: "center" }}>Sent confidentially.</h2>
+                        <p className="card-sub" style={{ textAlign: "center" }}>The recipient holds an encrypted note. They withdraw from their Dashboard.</p>
+                        <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", marginTop: 8 }}>
+                          <a href={`https://solscan.io/tx/${confTxSig}${clusterQuery}`} target="_blank" rel="noopener noreferrer" className="btn btn-glass btn-sm"><ExternalLink size={13} /> View on Solscan</a>
+                          <a href="/dashboard" className="btn btn-primary btn-sm"><ArrowRight size={13} /> Dashboard</a>
+                        </div>
+                        <button className="btn btn-ghost btn-sm" style={{ marginTop: 8, width: "100%", justifyContent: "center" }} onClick={() => { setConfStep("input"); setConfRecipient(""); setConfAmount(""); setConfTxSig(""); }}>Send another</button>
+                      </div>
+                    ) : confStep === "sending" ? (
+                      <div style={{ textAlign: "center", padding: "32px 0 20px" }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 72, height: 72, objectFit: "contain", margin: "0 auto 20px", display: "block" }} />
+                        <p style={{ fontWeight: 600, fontSize: 18, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{CONF_STEPS[confProgressStep - 1]?.label}</p>
+                        <p style={{ fontSize: 12, color: "var(--vp-violet)", fontFamily: "var(--font-mono)", fontWeight: 600, margin: "0 0 18px", letterSpacing: "0.04em" }}>{confProgressStep} / {CONF_STEPS.length}</p>
+                        <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+                          {CONF_STEPS.map((_, i) => {
+                            const s = i + 1;
+                            const done = s < confProgressStep;
+                            const active = s === confProgressStep;
+                            return (
+                              <div key={s} style={{
+                                flex: 1, height: 5, borderRadius: 3,
+                                background: done ? "linear-gradient(90deg,#6b7cff,#9b86ff)" : active ? "var(--vp-violet)" : "var(--hairline-strong)",
+                                opacity: done ? 1 : active ? 1 : 0.3,
+                                animation: active ? "stepPulse 1.6s ease-in-out infinite" : "none",
+                                transition: "background 0.4s",
+                              }} />
+                            );
+                          })}
+                        </div>
+                        <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "0 0 4px" }}>{CONF_STEPS[confProgressStep - 1]?.hint}</p>
+                        <p style={{ fontSize: 12, color: "var(--ink-4)", margin: 0, fontFamily: "var(--font-mono)" }}>{confStatusMsg || "Processing via Arcium MPC…"} </p>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ padding: "12px 14px", borderRadius: "var(--radius-sm)", background: "rgba(107,124,255,0.06)", border: "0.5px solid rgba(107,124,255,0.2)", marginBottom: 12 }}>
+                          <p style={{ fontSize: 12.5, color: "var(--ink-2)", margin: 0, lineHeight: 1.6 }}>
+                            <strong>Confidential transfer</strong> — amount is hidden on-chain via Arcium MPC. Funds land in the recipient&apos;s encrypted VeilPay balance. They must have connected to VeilPay at least once to receive.
+                          </p>
+                        </div>
+                        <div style={{ padding: "10px 14px", borderRadius: "var(--radius-sm)", background: "rgba(245,158,11,0.06)", border: "0.5px solid rgba(245,158,11,0.2)", marginBottom: 20, display: "flex", gap: 10, alignItems: "start" }}>
+                          <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚠️</span>
+                          <p style={{ fontSize: 12, color: "var(--ink-3)", margin: 0, lineHeight: 1.6 }}>Phantom may show a simulation warning for ZK/MPC transactions because they rely on execution conditions that simulation cannot reproduce. If you trust VeilPay, proceed anyway.</p>
+                        </div>
+                        <div className="field" style={{ marginBottom: 18 }}>
+                          <span className="field-label">Recipient VeilPay address</span>
+                          <input className="input mono" value={confRecipient} onChange={(e) => setConfRecipient(e.target.value.trim())} placeholder="Solana address…" />
+                          {confRecipientError && <p style={{ fontSize: 12, color: "#dc2626" }}>{confRecipientError}</p>}
+                        </div>
+                        <div className="field" style={{ marginBottom: 4 }}>
+                          <div className="field-label">Amount</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                            <input className="input input-amount" value={confAmount} onChange={(e) => setConfAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0.00" inputMode="decimal" />
+                            <TokenPicker value={confToken} onChange={setConfToken} />
+                          </div>
+                          {confAmountError && confAmount && <p style={{ fontSize: 12, color: "#dc2626", marginTop: 4 }}>{confAmountError}</p>}
+                        </div>
+                        <div className="divider" />
+                        {confError && (
+                          <div style={{ display: "flex", gap: 8, padding: "10px 14px", borderRadius: "var(--radius-sm)", background: "rgba(220,38,38,0.08)", border: "0.5px solid rgba(220,38,38,0.2)", marginBottom: 16 }}>
+                            <AlertTriangle size={14} style={{ color: "#dc2626", flexShrink: 0, marginTop: 1 }} />
+                            <p style={{ fontSize: 13, color: "#dc2626", margin: 0 }}>{confError}</p>
+                          </div>
+                        )}
+                        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                          {connected ? (
+                            <button className="btn btn-primary" onClick={handleConfSend} disabled={!canSendConf} style={{ width: "100%", justifyContent: "center" }}>
+                              <Send size={16} /> Send confidentially
+                            </button>
+                          ) : (
+                            <div style={{ width: "100%" }}>
+                              <ConnectWalletButton label="Connect Wallet to Send" variant="primary" />
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
               </div>
-            )}
+            </div>
 
-            {/* ── CONFIDENTIAL FLOW ── */}
-            {transferType === "confidential" && (
-              <>
-                {confStep === "done" ? (
-                  <div style={{ textAlign: "center" }}>
-                    <div className="success-mark" style={{ marginInline: "auto" }}><Check size={24} /></div>
-                    <h2 className="card-title" style={{ fontSize: 22, marginTop: 14, textAlign: "center" }}>Sent confidentially.</h2>
-                    <p className="card-sub" style={{ textAlign: "center" }}>The recipient holds an encrypted note. They withdraw from their Dashboard.</p>
-                    <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", marginTop: 8 }}>
-                      <a
-                        href={`https://solscan.io/tx/${confTxSig}${clusterQuery}`}
-                        target="_blank" rel="noopener noreferrer"
-                        className="btn btn-glass btn-sm"
-                      >
-                        <ExternalLink size={13} /> View on Solscan
-                      </a>
-                      <a href="/dashboard" className="btn btn-primary btn-sm">
-                        <ArrowRight size={13} /> Dashboard
-                      </a>
-                    </div>
-                    <button className="btn btn-ghost btn-sm" style={{ marginTop: 8, width: "100%", justifyContent: "center" }} onClick={() => { setConfStep("input"); setConfRecipient(""); setConfAmount(""); setConfTxSig(""); }}>
-                      Send another
-                    </button>
-                  </div>
-                ) : confStep === "sending" ? (
-                  <div style={{ textAlign: "center", padding: "32px 0 20px" }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/logo-nobg.png" alt="VeilPay" style={{ width: 72, height: 72, objectFit: "contain", margin: "0 auto 20px", display: "block" }} />
-
-                    <p style={{ fontWeight: 600, fontSize: 18, margin: "0 0 4px", letterSpacing: "-0.02em" }}>
-                      {CONF_STEPS[confProgressStep - 1]?.label}
-                    </p>
-                    <p style={{ fontSize: 12, color: "var(--vp-violet)", fontFamily: "var(--font-mono)", fontWeight: 600, margin: "0 0 18px", letterSpacing: "0.04em" }}>
-                      {confProgressStep} / {CONF_STEPS.length}
-                    </p>
-
-                    <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
-                      {CONF_STEPS.map((_, i) => {
-                        const s = i + 1;
-                        const done = s < confProgressStep;
-                        const active = s === confProgressStep;
-                        return (
-                          <div key={s} style={{
-                            flex: 1, height: 5, borderRadius: 3,
-                            background: done
-                              ? "linear-gradient(90deg,#6b7cff,#9b86ff)"
-                              : active ? "var(--vp-violet)" : "var(--hairline-strong)",
-                            opacity: done ? 1 : active ? 1 : 0.3,
-                            animation: active ? "stepPulse 1.6s ease-in-out infinite" : "none",
-                            transition: "background 0.4s",
-                          }} />
-                        );
-                      })}
-                    </div>
-
-                    <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "0 0 4px" }}>
-                      {CONF_STEPS[confProgressStep - 1]?.hint}
-                    </p>
-                    <p style={{ fontSize: 12, color: "var(--ink-4)", margin: 0, fontFamily: "var(--font-mono)" }}>
-                      {confStatusMsg || "Processing via Arcium MPC…"}
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ padding: "12px 14px", borderRadius: "var(--radius-sm)", background: "rgba(107,124,255,0.06)", border: "0.5px solid rgba(107,124,255,0.2)", marginBottom: 12 }}>
-                      <p style={{ fontSize: 12.5, color: "var(--ink-2)", margin: 0, lineHeight: 1.6 }}>
-                        <strong>Confidential transfer</strong> — amount is hidden on-chain via Arcium MPC. Funds land in the recipient&apos;s encrypted VeilPay balance.{" "}
-                        They must have connected to VeilPay at least once to receive.
-                      </p>
-                    </div>
-                    <div style={{ padding: "10px 14px", borderRadius: "var(--radius-sm)", background: "rgba(245,158,11,0.06)", border: "0.5px solid rgba(245,158,11,0.2)", marginBottom: 20, display: "flex", gap: 10, alignItems: "start" }}>
-                      <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚠️</span>
-                      <p style={{ fontSize: 12, color: "var(--ink-3)", margin: 0, lineHeight: 1.6 }}>
-                        Phantom may show a simulation warning for ZK/MPC transactions because they rely on execution conditions that simulation cannot reproduce. If you trust VeilPay, proceed anyway.
-                      </p>
-                    </div>
-
-                    <div className="field" style={{ marginBottom: 18 }}>
-                      <span className="field-label">Recipient VeilPay address</span>
-                      <input
-                        className="input mono"
-                        value={confRecipient}
-                        onChange={(e) => setConfRecipient(e.target.value.trim())}
-                        placeholder="Solana address…"
-                      />
-                      {confRecipientError && <p style={{ fontSize: 12, color: "#dc2626" }}>{confRecipientError}</p>}
-                    </div>
-
-                    <div className="field" style={{ marginBottom: 4 }}>
-                      <div className="field-label">Amount</div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                        <input
-                          className="input input-amount"
-                          value={confAmount}
-                          onChange={(e) => setConfAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-                          placeholder="0.00"
-                          inputMode="decimal"
-                        />
-                        <TokenPicker value={confToken} onChange={setConfToken} />
-                      </div>
-                      {confAmountError && confAmount && <p style={{ fontSize: 12, color: "#dc2626", marginTop: 4 }}>{confAmountError}</p>}
-                    </div>
-
-                    <div className="divider" />
-
-                    {confError && (
-                      <div style={{ display: "flex", gap: 8, padding: "10px 14px", borderRadius: "var(--radius-sm)", background: "rgba(220,38,38,0.08)", border: "0.5px solid rgba(220,38,38,0.2)", marginBottom: 16 }}>
-                        <AlertTriangle size={14} style={{ color: "#dc2626", flexShrink: 0, marginTop: 1 }} />
-                        <p style={{ fontSize: 13, color: "#dc2626", margin: 0 }}>{confError}</p>
-                      </div>
-                    )}
-
-                    <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                      {connected ? (
-                        <button className="btn btn-primary" onClick={handleConfSend} disabled={!canSendConf} style={{ width: "100%", justifyContent: "center" }}>
-                          <Send size={16} /> Send confidentially
-                        </button>
-                      ) : (
-                        <div style={{ width: "100%" }}>
-                          <ConnectWalletButton label="Connect Wallet to Send" variant="primary" />
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </>
-            )}
           </div>
         </div>
       </section>
