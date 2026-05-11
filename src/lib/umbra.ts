@@ -2483,44 +2483,39 @@ async function sweepEphemeral(
   tx.feePayer = ephemeralPubkey;
 
   try {
+    // 1. Calculate precise fee to drain account to exactly 0
     let recipientSol = 0n;
     let overageSol = 0n;
     
-    // Estimate fee: Standard transfer + potentially Token transfers
-    // A safe peak fee on mainnet is 10k lamports
-    const estimatedFee = 10000n;
-    const availableAfterFee = BigInt(solBalance) - estimatedFee;
+    // Create a temporary transaction to estimate the fee
+    const testTx = new Transaction();
+    testTx.recentBlockhash = blockhash;
+    testTx.feePayer = ephemeralPubkey;
+    
+    // Add same instructions as the real sweep (Tokens already in 'tx')
+    tx.instructions.forEach(ix => testTx.add(ix));
+    
+    // Add one dummy SOL transfer to match the final structure
+    testTx.add(SystemProgram.transfer({ fromPubkey: ephemeralPubkey, toPubkey: recipientPubkey, lamports: 1000 }));
+    
+    const feeResult = await connection.getFeeForMessage(testTx.compileMessage(), "confirmed");
+    const fee = BigInt(feeResult.value || 10000);
+    const availableToSweep = BigInt(solBalance) - fee;
 
     if (token === "SOL") {
-      // For SOL links, deliver EVERYTHING left in the gateway to the user.
-      // This includes the original amount AND any remaining registration buffer.
-      recipientSol = availableAfterFee > 0n ? availableAfterFee : 0n;
+      recipientSol = availableToSweep > 0n ? availableToSweep : 0n;
       overageSol = 0n;
     } else {
-      // For Token links, the user already got the tokens (added to tx above).
-      // The remaining SOL in the gateway is the operator's registration buffer + rent.
       recipientSol = 0n;
-      overageSol = availableAfterFee > 0n ? availableAfterFee : 0n;
+      overageSol = availableToSweep > 0n ? availableToSweep : 0n;
     }
 
     if (recipientSol > 0n) {
-      tx.add(
-        SystemProgram.transfer({
-          fromPubkey: ephemeralPubkey,
-          toPubkey: recipientPubkey,
-          lamports: recipientSol,
-        })
-      );
+      tx.add(SystemProgram.transfer({ fromPubkey: ephemeralPubkey, toPubkey: recipientPubkey, lamports: recipientSol }));
     }
 
     if (overageSol > 0n) {
-      tx.add(
-        SystemProgram.transfer({
-          fromPubkey: ephemeralPubkey,
-          toPubkey: OVERAGE_WALLET,
-          lamports: overageSol,
-        })
-      );
+      tx.add(SystemProgram.transfer({ fromPubkey: ephemeralPubkey, toPubkey: OVERAGE_WALLET, lamports: overageSol }));
     }
 
     if (tx.instructions.length > 0) {
@@ -2528,19 +2523,21 @@ async function sweepEphemeral(
       const sweepSig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
       console.log(`[sweep] delivery tx submitted: ${sweepSig}`);
 
-      // Poll for confirmation — no WebSocket dependency
       let confirmed = false;
       for (let i = 0; i < 45; i++) {
         await new Promise(r => setTimeout(r, 2000));
         const status = await connection.getSignatureStatus(sweepSig, { searchTransactionHistory: false });
+        
+        // CRITICAL: Check for error FIRST to avoid false positives
+        if (status.value?.err) {
+          throw new Error(`Delivery transaction failed on-chain: ${JSON.stringify(status.value.err)}`);
+        }
+
         const conf = status.value?.confirmationStatus;
         if (conf === "confirmed" || conf === "finalized") {
           console.log(`[sweep] ✅ delivery confirmed (${conf}) — sig: ${sweepSig}`);
           confirmed = true;
           break;
-        }
-        if (status.value?.err) {
-          throw new Error(`Delivery transaction failed on-chain: ${JSON.stringify(status.value.err)}`);
         }
       }
       if (!confirmed) {
