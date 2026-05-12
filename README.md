@@ -56,6 +56,25 @@ The ZK proof proves "I know the secret for a valid commitment in this pool" with
 
 ---
 
+## Resilience & Mainnet Recovery
+
+VeilPay is built to handle the high latency and dynamic nature of Solana Mainnet. Unlike standard prototypes, it includes a multi-layered recovery system:
+
+### 1. 3-Stage Atomic Resumption
+Claiming a private link involves moving funds through three distinct states: **Shielded Pool** → **Private Vault** (Arcium) → **Public Gateway** → **User Wallet**. VeilPay's "Resume" logic automatically detects if a claim was interrupted (due to browser crash or RPC timeout) and allows the user to finish the delivery with a single click, starting from the furthest progressed stage.
+
+### 2. "Stranded SOL" Rescue (Sender Side)
+If a sender funds the ephemeral gateway but the link creation is aborted before the ZK deposit is committed, the ephemeral keypair is persisted in the browser's local state. On the next visit, the user is presented with a "Rescue Buffer" banner to sweep those funds back to their main wallet.
+
+### 3. Mainnet Latency Buffers
+- **Extended Polling**: VeilPay polls for Arcium MPC callbacks for up to **180 seconds**, ensuring that even during extreme network congestion, the tokens are captured as they land in the gateway.
+- **Rent-Exemption Safety**: The system maintains a **0.005 SOL safety buffer** in every gateway transaction. This prevents on-chain failures caused by `InsufficientFundsForRent` when creating recipient token accounts or handling rent-exempt minimums.
+
+### 4. Precise Fee Calculation
+The final delivery phase uses a "Drain to 0" or "Safe Rent" strategy. It calculates exact network fees to ensure the gateway wallet is either perfectly emptied or left with a healthy rent balance, preventing the common mainnet "gas-burn" spiral where failed transactions consume the remaining buffer.
+
+---
+
 ## Stack
 
 | Layer | Choice |
